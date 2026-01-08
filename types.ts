@@ -38,7 +38,7 @@ export interface AppState {
   statusMessage: string;
 }
 
-export const SAMPLE_MASTER_TEX = `%-------------------------
+export const SAMPLE_MASTER_TEX: string = `%-------------------------
 % Resume in Latex
 % Author
 % License : MIT
