@@ -25,8 +25,6 @@ const App: React.FC = () => {
   useEffect(() => {
     const init = async () => {
         // In real app, check if workspace was previously open
-        // For dev convenience, if master.tex exists in fixed path, load it (or allow user to pick)
-        // Note: For now we wait for user to click "Open Workspace"
     };
     init();
   }, []);
@@ -36,17 +34,16 @@ const App: React.FC = () => {
       setState(prev => ({ ...prev, masterContent: newContent }));
   };
 
-  // Re-parse sections when masterContent changes (Debounced ideally)
+  // Re-parse sections when masterContent changes
   useEffect(() => {
       const handler = setTimeout(() => {
           const sections = parseMasterTex(state.masterContent);
-          // We need to preserve checked state if IDs match
           setState(prev => {
               const mergedSections = sections.map(newSec => {
-                  const oldSec = prev.sections.find(s => s.title === newSec.title); // Simple matching by title
+                  const oldSec = prev.sections.find(s => s.title === newSec.title);
                   if (oldSec) {
                       newSec.items = newSec.items.map(newItem => {
-                          const oldItem = oldSec.items.find(i => i.content === newItem.content); // Match by content
+                          const oldItem = oldSec.items.find(i => i.content === newItem.content);
                           if (oldItem) newItem.isChecked = oldItem.isChecked;
                           return newItem;
                       });
@@ -79,6 +76,7 @@ const App: React.FC = () => {
       if (!state.workspacePath) return;
 
       setState(prev => ({ ...prev, isCompiling: true, statusMessage: 'Generating compiled.tex...' }));
+      setPdfUrl(null); // Clear previous PDF while compiling
 
       try {
           // 1. Assemble
@@ -89,23 +87,39 @@ const App: React.FC = () => {
           await fileSystem.writeFile(`${state.workspacePath}/build/compiled.tex`, compiledTex);
           
           // 3. Run Command
-          setState(prev => ({ ...prev, statusMessage: 'Running Latexmk...' }));
+          setState(prev => ({ ...prev, statusMessage: 'Running LaTeX Compiler (latexmk/pdflatex)...' }));
           const result = await fileSystem.runCompileCommand(state.workspacePath);
           
           if (result.success) {
               // 4. Load PDF for Preview
               setState(prev => ({ ...prev, statusMessage: 'Reading PDF...' }));
-              const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/output.pdf`);
-              setPdfUrl(`data:application/pdf;base64,${pdfBase64}`);
+              try {
+                const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/output.pdf`);
+                setPdfUrl(`data:application/pdf;base64,${pdfBase64}`);
+                setState(prev => ({ 
+                    ...prev, 
+                    isCompiling: false, 
+                    compileLog: result.stdout,
+                    statusMessage: 'Compilation Success',
+                    lastCompileSuccess: true
+                }));
+              } catch (readError) {
+                 setState(prev => ({ 
+                    ...prev, 
+                    isCompiling: false, 
+                    statusMessage: 'Compilation successful, but output.pdf is missing or empty.',
+                    lastCompileSuccess: false
+                }));
+              }
+          } else {
+            setState(prev => ({ 
+                ...prev, 
+                isCompiling: false, 
+                compileLog: result.stdout + "\n" + result.stderr,
+                statusMessage: 'Compilation Failed',
+                lastCompileSuccess: false
+            }));
           }
-
-          setState(prev => ({ 
-              ...prev, 
-              isCompiling: false, 
-              compileLog: result.stdout || result.stderr,
-              statusMessage: result.success ? 'Compilation Success' : 'Compilation Failed',
-              lastCompileSuccess: result.success
-          }));
 
       } catch (e: any) {
           setState(prev => ({ ...prev, isCompiling: false, statusMessage: `Error: ${e.message}` }));
@@ -153,9 +167,6 @@ const App: React.FC = () => {
           const exists = await fileSystem.exists(masterPath);
           
           if (!exists) {
-              // Create sample
-              // Need to import SAMPLE_MASTER_TEX here or fetch it. 
-              // Since it's in types, we just import it at top.
               const { SAMPLE_MASTER_TEX } = await import('./types');
               await fileSystem.writeFile(masterPath, SAMPLE_MASTER_TEX);
           }

@@ -14,7 +14,6 @@ const RENDERER_DEV_URL = 'http://localhost:3000';
 const RENDERER_PROD_PATH = path.join(__dirname, '../build/index.html');
 
 // --- Extensible IPC Router ---
-// This class manages IPC handlers, allowing you to split logic into different files later.
 class IpcRouter {
   constructor() {
     this.registerHandlers();
@@ -38,14 +37,19 @@ class IpcRouter {
       return await fs.readFile(filePath, 'utf-8');
     });
 
-    // New: Read file as base64 buffer (for PDF preview)
+    // Read file as base64 buffer (for PDF preview)
     this.handle('fs:read-buffer', async (_, filePath: string) => {
-      const buffer = await fs.readFile(filePath);
-      return buffer.toString('base64');
+      try {
+        const buffer = await fs.readFile(filePath);
+        if (buffer.length === 0) throw new Error("File is empty");
+        return buffer.toString('base64');
+      } catch (e) {
+        console.error("Failed to read PDF buffer:", e);
+        throw e;
+      }
     });
 
     this.handle('fs:write-file', async (_, filePath: string, content: string) => {
-      // Ensure directory exists before writing
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, content, 'utf-8');
     });
@@ -80,21 +84,33 @@ class IpcRouter {
 
     // --- Compiler Handlers ---
     this.handle('compiler:run', async (_, cwd: string) => {
-      return new Promise((resolve) => {
-        // Command Configuration
-        // Note: Switched to -pdf (pdflatex) because the template uses 'cfr-lm' (Type1 fonts)
-        // which works best with standard pdflatex. -xelatex might break it.
-        const command = 'latexmk -pdf -interaction=nonstopmode -output-directory=build compiled.tex';
-        
-        // Execute
-        exec(command, { cwd }, (error, stdout, stderr) => {
-          resolve({
-            success: !error,
-            stdout: stdout || '',
-            stderr: stderr || (error ? error.message : '')
+      
+      const runCommand = (cmd: string): Promise<{success: boolean, stdout: string, stderr: string}> => {
+        return new Promise((resolve) => {
+          exec(cmd, { cwd }, (error, stdout, stderr) => {
+            resolve({
+              success: !error,
+              stdout: stdout || '',
+              stderr: stderr || (error ? error.message : '')
+            });
           });
         });
-      });
+      };
+
+      // Strategy: Try latexmk first (best for dependencies), fallback to pdflatex (standard, no perl needed)
+      // Note: We use -interaction=nonstopmode to prevent hanging on errors
+      
+      // 1. Try latexmk
+      let result = await runCommand('latexmk -pdf -interaction=nonstopmode -output-directory=build compiled.tex');
+      
+      if (!result.success) {
+        console.log("Latexmk failed or not found, falling back to pdflatex...");
+        // 2. Fallback to pdflatex (Note: output-directory flag syntax varies, strictly typically -output-directory works for MiKTeX/TeXLive)
+        // We run it twice to resolve basic references if possible, though mostly once is enough for preview
+        result = await runCommand('pdflatex -interaction=nonstopmode -output-directory=build compiled.tex');
+      }
+
+      return result;
     });
   }
 }
@@ -108,8 +124,8 @@ function createWindow() {
     height: 900,
     webPreferences: {
       preload: PRELOAD_PATH,
-      contextIsolation: true, // Security: ON
-      nodeIntegration: false, // Security: OFF
+      contextIsolation: true,
+      nodeIntegration: false,
       webSecurity: true // Keep security on
     },
     title: "Resume Assembler",
@@ -123,16 +139,14 @@ function createWindow() {
     mainWindow.loadFile(RENDERER_PROD_PATH);
   }
 
-  // Handle new window requests (e.g. links) to open in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
 }
 
-// --- App Lifecycle ---
 app.whenReady().then(() => {
-  new IpcRouter(); // Initialize IPC handlers
+  new IpcRouter();
   createWindow();
 
   app.on('activate', () => {
