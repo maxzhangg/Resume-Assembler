@@ -1,0 +1,5 @@
+{
+  "name": "Resume Assembler",
+  "description": "A three-column LaTeX resume builder with modular selection, AI prompt generation, and safe content merging.",
+  "requestFramePermissions": []
+}
