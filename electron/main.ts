@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { exec } from 'child_process';
@@ -23,7 +23,7 @@ class IpcRouter {
   }
 
   // Wrapper to handle errors consistently
-  private handle(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<any> | any) {
+  private handle(channel: string, handler: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<any> | any) {
     ipcMain.handle(channel, async (event, ...args) => {
       try {
         return await handler(event, ...args);
@@ -89,6 +89,7 @@ class IpcRouter {
       const runCommand = (cmd: string): Promise<{success: boolean, stdout: string, stderr: string}> => {
         return new Promise((resolve) => {
           // Use a large buffer to prevent crash on verbose logs
+          // CWD is strictly set to the Workspace Root provided by renderer
           exec(cmd, { cwd, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             resolve({
               success: !error,
@@ -99,7 +100,9 @@ class IpcRouter {
         });
       };
 
-      // 1. Try latexmk (Standard)
+      // STRICT REQUIREMENT: Input file is 'compiled.tex' (in CWD root)
+      // Output is directed to 'build' subdirectory.
+      // This ensures \includepdf{./doc.pdf} works because CWD is root.
       console.log(`[Compiler] Attempting latexmk in ${cwd}`);
       let result = await runCommand(`latexmk -pdf -interaction=nonstopmode -outdir=${COMPILE_DIR_NAME} compiled.tex`);
       
@@ -107,7 +110,8 @@ class IpcRouter {
         console.log("[Compiler] Latexmk failed/missing. Error:", result.stderr);
         console.log("[Compiler] Attempting fallback to pdflatex...");
         
-        // 2. Fallback: pdflatex
+        // Fallback: pdflatex
+        // Note: pdflatex uses -output-directory, latexmk uses -outdir
         const cmd = `pdflatex -interaction=nonstopmode -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
         result = await runCommand(cmd);
         

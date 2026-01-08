@@ -1,16 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import EditorColumn from './components/EditorColumn';
 import PreviewColumn from './components/PreviewColumn';
 import ToolsColumn from './components/ToolsColumn';
 import { fileSystem } from './services/fileSystem';
 import { parseMasterTex, assembleLatex } from './services/parser';
 import { generatePrompt, safeMergeAIOutput } from './services/aiService';
-import { AppState, ResumeSection } from './types';
+import { AppState, SAMPLE_MASTER_TEX, ResumeSection } from './types';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
     workspacePath: null,
-    masterContent: '',
+    masterContent: '',   
+    workingContent: '',  
     sections: [],
     jobDescription: '',
     isCompiling: false,
@@ -20,54 +21,76 @@ const App: React.FC = () => {
   });
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  
+  // Ref to hold the latest section check states to survive re-parsing
+  const sectionStateRef = useRef<Record<string, Record<string, boolean>>>({});
 
-  // Initial Load (Simulating opening a workspace)
-  useEffect(() => {
-    // Optional: Load last workspace from local storage if needed
-  }, []);
-
-  // Handle Master Content Change (Manual Edit - In Memory)
-  const handleEditorChange = (newContent: string) => {
-      setState(prev => ({ ...prev, masterContent: newContent }));
+  // Helper to sync ref with current state sections
+  const updateSectionStateRef = (sections: ResumeSection[]) => {
+      sections.forEach(sec => {
+          if (!sectionStateRef.current[sec.title]) sectionStateRef.current[sec.title] = {};
+          sec.items.forEach(item => {
+              sectionStateRef.current[sec.title][item.content] = item.isChecked;
+          });
+      });
   };
 
-  // Handle Save to Disk
-  const handleSaveMaster = async () => {
-      if (!state.workspacePath) return;
-      try {
-        await fileSystem.writeFile(`${state.workspacePath}/master.tex`, state.masterContent);
-        setState(prev => ({ ...prev, statusMessage: 'Saved master.tex successfully.' }));
-      } catch (e: any) {
-        setState(prev => ({ ...prev, statusMessage: `Error saving: ${e.message}` }));
+  const handleEditorChange = (newContent: string) => {
+      setState(prev => ({ ...prev, workingContent: newContent }));
+  };
+
+  const handleResetToMaster = () => {
+      if (!state.masterContent) return;
+      if (window.confirm("Are you sure? This will discard all current edits and reload from master.tex.")) {
+        setState(prev => ({ 
+            ...prev, 
+            workingContent: prev.masterContent,
+            statusMessage: 'Reset working copy to Master Template.' 
+        }));
       }
   };
 
-  // Re-parse sections when masterContent changes
+  // Debounced parsing for UI updates
   useEffect(() => {
       const handler = setTimeout(() => {
-          const sections = parseMasterTex(state.masterContent);
+          const freshSections = parseMasterTex(state.workingContent);
+          
           setState(prev => {
-              const mergedSections = sections.map(newSec => {
+              // Preserve checkboxes based on Content matching
+              // This relies on the content string being the identity of the item
+              const mergedSections = freshSections.map(newSec => {
                   const oldSec = prev.sections.find(s => s.title === newSec.title);
-                  if (oldSec) {
+                  
+                  // Also check Ref for persisted state
+                  const savedState = sectionStateRef.current[newSec.title] || {};
+
+                  if (oldSec || savedState) {
                       newSec.items = newSec.items.map(newItem => {
-                          const oldItem = oldSec.items.find(i => i.content === newItem.content);
-                          if (oldItem) newItem.isChecked = oldItem.isChecked;
+                          // Priority: Current State -> Saved Ref -> Default True
+                          const oldItem = oldSec?.items.find(i => i.content === newItem.content);
+                          if (oldItem) {
+                              newItem.isChecked = oldItem.isChecked;
+                          } else if (savedState[newItem.content] !== undefined) {
+                              newItem.isChecked = savedState[newItem.content];
+                          }
                           return newItem;
                       });
                   }
                   return newSec;
               });
+              
+              // Update ref with new structure
+              updateSectionStateRef(mergedSections);
+              
               return { ...prev, sections: mergedSections };
           });
-      }, 1000);
+      }, 800); 
       return () => clearTimeout(handler);
-  }, [state.masterContent]);
+  }, [state.workingContent]);
 
   const handleToggleItem = (sectionId: string, itemId: string) => {
-      setState(prev => ({
-          ...prev,
-          sections: prev.sections.map(sec => {
+      setState(prev => {
+          const newSections = prev.sections.map(sec => {
               if (sec.id !== sectionId) return sec;
               return {
                   ...sec,
@@ -76,37 +99,59 @@ const App: React.FC = () => {
                       return { ...item, isChecked: !item.isChecked };
                   })
               };
-          })
-      }));
+          });
+          updateSectionStateRef(newSections);
+          return { ...prev, sections: newSections };
+      });
   };
 
   const handleCompile = async () => {
       if (!state.workspacePath) return;
 
-      setState(prev => ({ ...prev, isCompiling: true, statusMessage: 'Generating compiled.tex from current editor state...' }));
-      setPdfUrl(null); // Clear previous PDF while compiling
+      setState(prev => ({ ...prev, isCompiling: true, statusMessage: 'Preparing compiled.tex...' }));
+      setPdfUrl(null); 
 
       try {
-          // 1. Assemble from In-Memory State (not disk)
-          // This respects the "Compiled is temp tex" requirement
-          const compiledTex = assembleLatex(state.masterContent, state.sections);
+          // 1. CRITICAL: Re-parse immediately to get accurate indices for the CURRENT content
+          // The state.sections might be stale if user typed recently.
+          const freshSections = parseMasterTex(state.workingContent);
           
-          // 2. Write compiled.tex to disk (Temporary build artifact)
+          // 2. Apply Checkbox State to Fresh Sections
+          // We must map the user's choices (from state.sections/ref) onto these fresh indices
+          const sectionsWithState = freshSections.map(freshSec => {
+             const userSec = state.sections.find(s => s.title === freshSec.title);
+             const savedState = sectionStateRef.current[freshSec.title] || {};
+             
+             freshSec.items = freshSec.items.map(freshItem => {
+                 // Try to find matching item in user state to respect their choice
+                 // Matching by Content is the safest heuristic here
+                 const userItem = userSec?.items.find(i => i.content === freshItem.content);
+                 if (userItem) {
+                     freshItem.isChecked = userItem.isChecked;
+                 } else if (savedState[freshItem.content] !== undefined) {
+                     freshItem.isChecked = savedState[freshItem.content];
+                 }
+                 return freshItem;
+             });
+             return freshSec;
+          });
+
+          // 3. Assemble
+          const compiledTex = assembleLatex(state.workingContent, sectionsWithState);
+          
+          // 4. Write & Compile
           await fileSystem.writeFile(`${state.workspacePath}/compiled.tex`, compiledTex);
-          
-          // Ensure build directory exists for output
           await fileSystem.createDirectory(`${state.workspacePath}/build`);
 
-          // 3. Run Command
           setState(prev => ({ ...prev, statusMessage: 'Running LaTeX Compiler...' }));
           const result = await fileSystem.runCompileCommand(state.workspacePath);
           
           if (result.success) {
-              // 4. Load PDF for Preview
               setState(prev => ({ ...prev, statusMessage: 'Reading PDF...' }));
               try {
-                // PDF is output to build/output.pdf because we use -outdir=build
                 const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/compiled.pdf`);
+                // Use blob URL if possible for better performance? 
+                // For now base64 is simpler with the IPC setup.
                 setPdfUrl(`data:application/pdf;base64,${pdfBase64}`);
                 setState(prev => ({ 
                     ...prev, 
@@ -119,7 +164,7 @@ const App: React.FC = () => {
                  setState(prev => ({ 
                     ...prev, 
                     isCompiling: false, 
-                    statusMessage: 'Compilation successful, but build/compiled.pdf is missing.',
+                    statusMessage: 'Compilation successful, but output PDF is missing.',
                     lastCompileSuccess: false
                 }));
               }
@@ -134,6 +179,7 @@ const App: React.FC = () => {
           }
 
       } catch (e: any) {
+          console.error(e);
           setState(prev => ({ ...prev, isCompiling: false, statusMessage: `Error: ${e.message}` }));
       }
   };
@@ -141,33 +187,18 @@ const App: React.FC = () => {
   const handleGeneratePrompt = () => {
       const prompt = generatePrompt(state.jobDescription, state.sections);
       navigator.clipboard.writeText(prompt);
-      alert("Prompt copied to clipboard! Paste it into ChatGPT/Claude.");
+      alert("Prompt copied to clipboard!");
   };
 
   const handleAiMerge = async (aiOutput: string) => {
-      // 1. Backup before merge
-      if (state.workspacePath) {
-          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-          await fileSystem.createDirectory(`${state.workspacePath}/backups`);
-          await fileSystem.writeFile(`${state.workspacePath}/backups/master-${timestamp}.tex`, state.masterContent);
-          await fileSystem.createDirectory(`${state.workspacePath}/patches`);
-          await fileSystem.writeFile(`${state.workspacePath}/patches/patch-${timestamp}.txt`, aiOutput);
-      }
-
-      // 2. Safe Merge (Memory)
-      const result = safeMergeAIOutput(state.masterContent, aiOutput);
+      const result = safeMergeAIOutput(state.workingContent, aiOutput);
 
       if (result.success) {
-          // Update Memory
-          setState(prev => ({ ...prev, masterContent: result.newContent, statusMessage: 'AI Merge Successful. Master saved automatically.' }));
-          
-          // 3. Save to Disk (AI Merge implies a commit to master)
-          if (state.workspacePath) {
-              await fileSystem.writeFile(`${state.workspacePath}/master.tex`, result.newContent);
-          }
-          
-          // Optionally auto-compile
-          setTimeout(handleCompile, 500);
+          setState(prev => ({ 
+              ...prev, 
+              workingContent: result.newContent, 
+              statusMessage: 'AI Merge Applied. Click Compile to update view.' 
+          }));
       } else {
           alert(result.error);
           setState(prev => ({ ...prev, statusMessage: 'AI Merge Blocked by Safety Check' }));
@@ -180,9 +211,7 @@ const App: React.FC = () => {
           const masterPath = `${dir}/master.tex`;
           const exists = await fileSystem.exists(masterPath);
           
-          // "Open workspace should find existing tex... use as template"
           if (!exists) {
-              const { SAMPLE_MASTER_TEX } = await import('./types');
               await fileSystem.writeFile(masterPath, SAMPLE_MASTER_TEX);
           }
 
@@ -192,16 +221,17 @@ const App: React.FC = () => {
           setState(prev => ({ 
               ...prev, 
               workspacePath: dir, 
-              masterContent: content, 
+              masterContent: content,  
+              workingContent: content, 
               sections,
               statusMessage: 'Workspace Loaded'
           }));
+          updateSectionStateRef(sections);
       }
   };
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden">
-      {/* Header */}
       <div className="h-12 bg-gray-900 text-white flex items-center px-4 justify-between shrink-0">
         <div className="font-bold text-lg flex items-center gap-2">
             <span>📝 Resume Assembler</span>
@@ -216,13 +246,13 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* 3-Column Grid */}
       <div className="flex-1 grid grid-cols-12 min-h-0">
         <div className="col-span-4 h-full overflow-hidden">
             <EditorColumn 
-                content={state.masterContent} 
+                content={state.workingContent} 
                 onChange={handleEditorChange} 
-                onSave={handleSaveMaster}
+                onReset={handleResetToMaster}
+                isDirty={state.workingContent !== state.masterContent}
             />
         </div>
         <div className="col-span-5 h-full overflow-hidden">

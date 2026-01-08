@@ -36,7 +36,8 @@ export interface ResumeSection {
 
 export interface AppState {
   workspacePath: string | null;
-  masterContent: string;
+  masterContent: string; // The immutable template from disk
+  workingContent: string; // The mutable editor content (in-memory)
   sections: ResumeSection[];
   jobDescription: string;
   isCompiling: boolean;
@@ -170,11 +171,11 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 %-------------------------------------------
 %%%%%%  CV STARTS HERE  %%%%%%%%%%%
 %%%%%% DEFINE ELEMENTS HERE %%%%%%%
-\\newcommand{\\name}{Max Zhang} % Your Name
-\\newcommand{\\course}{Computer Science and Engineering} % Your Program
+\\newcommand{\\name}{Your Name} % Your Name
+\\newcommand{\\course}{Computer Science} % Your Program
 %\\newcommand{\\roll}{xxxxxxx} % Your Roll No.
-\\newcommand{\\phone}{3433681577} % Your Phone Number
-\\newcommand{\\emaila}{maxzhangggg@gmail.com} %Email 1
+\\newcommand{\\phone}{123-456-7890} % Your Phone Number
+\\newcommand{\\emaila}{email@example.com} %Email 1
 
 \\begin{document}
 \\fontfamily{cmr}\\selectfont
@@ -183,9 +184,9 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 {
 \\begin{tabularx}{\\linewidth}{L r} \\\\
   \\textbf{\\Large \\name} & \\href{mailto:\\emaila}{\\raisebox{0.0\\height}{\\footnotesize \\faEnvelope}\\ {Email}}\\\\
-  {(She/Her) } &  \\href{https://maxzhangg.github.io/portfolio/\\#/resume}{\\raisebox{0.0\\height}{\\footnotesize \\faHome}\\ {Portfolio}}\\\\
-  Master of Engineering & \\href{https://github.com/maxzhangg}{\\raisebox{0.0\\height}{\\footnotesize \\faGithub}\\ {GitHub}} \\\\  
-  {University of Ottawa Ottawa, ON} & \\href{https://www.linkedin.com/in/maxzhang0/}{\\raisebox{0.0\\height}{\\footnotesize \\faLinkedin}\\ {LinkedIn}}
+  {Location } &  \\href{https://github.com/}{\\raisebox{0.0\\height}{\\footnotesize \\faHome}\\ {Portfolio}}\\\\
+  Degree & \\href{https://github.com/}{\\raisebox{0.0\\height}{\\footnotesize \\faGithub}\\ {GitHub}} \\\\  
+  {University Name} & \\href{https://linkedin.com/}{\\raisebox{0.0\\height}{\\footnotesize \\faLinkedin}\\ {LinkedIn}}
 \\end{tabularx}
 }
 \\vspace{-4mm}
@@ -193,124 +194,39 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\section{\\textbf{Technical Skills}}
 \\begin{itemize}[leftmargin=0.05in, label={}]
     \\small{\\item{
-     \\textbf{Data \\& Analytics}{: SQL, Python (Pandas, NumPy, Matplotlib), Excel} \\\\  
-     \\textbf{Programming \\& Scripting}{: Python, Java, TCL, JavaScript, Bash, Linux, Git} \\\\  
-     \\textbf{Machine Learning}{: Scikit-learn, XGBoost, Keras (model evaluation and experimentation)} \\\\  
-     \\textbf{Web \\& Visualization}{: React, HTML, Tailwind CSS, JSON} \\\\  
-     \\textbf{Networking \\& Systems}{: Ethernet, Optical Networks, TCP/IP, Linux-based systems} \\\\  
-     \\textbf{Testing \\& Automation}{: Pytest, Selenium, Appium, JUnit} \\\\  
-     \\textbf{Tools}{: JIRA, GitHub, Agile/Scrum} \\\\  
-     \\textbf{Languages}{: English (fluent, professional working proficiency)} \\\\  
+     \\textbf{Languages}{: Python, JavaScript, TypeScript, Java} \\\\  
+     \\textbf{Web}{: React, Node.js, HTML, CSS} \\\\  
     }}
 \\end{itemize}
-
-
- \\vspace{-20pt}
-
-%-----------EDUCATION-----------
-\\section{\\textbf{Education}}
-  \\resumeSubHeadingListStart
-    \\resumeSubheading
-      {Master of Engineering in Electrical and Computer Engineering}{GPA:9.22/10}
-      {University of Ottawa}{2023-2025}
-    \\resumeSubheading
-      {Bachelor of Engineering in Electrical Engineering and Automation}{GPA:87.2/100}
-      {Northeast Electric Power University}{2019-2023}
-  \\resumeSubHeadingListEnd
-\\vspace{-5.5mm}
-%
-
+\\vspace{-20pt}
 
 %-----------EXPERIENCE-----------------
 \\section{\\textbf{Experience}}
   \\resumeSubHeadingListStart
     \\resumeSubheading
-      {Service Router Test Platform Dev Student}{Ottawa}
-      {Nokia}{Apr 2024 - Dec 2024}
+      {Software Engineer}{City}
+      {Company Name}{Jan 2023 - Present}
       \\vspace{-2.0mm}
      \\resumeItemListStart
-\\item Analyzed large-scale regression and validation datasets in a \\textbf{Linux-based environment}, identifying failure patterns and stability risks across hardware and software versions.
-\\item Executed \\textbf{1,078+ structured test runs} on QSFP28 (4x25G / 100G PSM4) optical transceivers; summarized pass/fail metrics and trend insights to support release decisions.
-\\item Designed and validated test scenarios for optical modules and Media Dependent Adapters, improving feature-level verification coverage.
-\\item Investigated and reported \\textbf{7 critical embedded software defects}, collaborating with developers to validate \\textbf{8 fixes across 3 software images}.
-\\item Optimized internal test scripts (GASH/TCL) to reduce repetitive execution effort and improve data reliability for downstream analysis.
+\\item Developed features using React and TypeScript.
+\\item Optimized database queries reducing load time by 20\\%.
 \\resumeItemListEnd
-
-    
-  %  \\vspace{-3.0mm}
-\\vspace{-4mm}
-
-
-
-
+  \\resumeSubHeadingListEnd
+\\vspace{-5.5mm}
 
 %-----------PROJECTS-----------------
 \\section{\\textbf{Projects}}
 \\vspace{-2mm}
 \\resumeSubHeadingListStart
 \\resumeProject
-  {Relationship K-Line (AI-Powered Astrology Visualization Tool)}
-  {Built a dual-language BaZi + Gen-AI web app to quantify and visualize romantic compatibility over a 10--20 year period.}
-  {2025.01}
-
+  {Project Name}
+  {Description of the project.}
+  {2023}
 \\resumeItemListStart
-\\item Developed a client-side-only web app with \\textbf{React 19}, \\textbf{TypeScript}, \\textbf{Vite}, and \\textbf{Tailwind CSS}; deployed to \\textbf{GitHub Pages}.
-\\item Implemented \\textbf{dual-language localization} (English/Simplified Chinese) with automatic browser language detection using \\textbf{Context API}.
-\\item Calculated \\textbf{True Solar Time} using longitude/latitude and performed high-precision BaZi conversions (JieQi, GanZhi) via \\textbf{lunar-javascript} for accurate Hour Pillar computation.
-\\item Integrated \\textbf{Google Gemini} (via \\textbf{@google/genai}) to generate structured year-by-year reasoning, highlighting relationship \`\`Golden Years'' and \`\`Risk Years'' based on metaphysics interactions.
-\\item Built interactive visual analytics with \\textbf{Recharts}, including custom \\textbf{Candlestick (Love K-Line)} charts, \\textbf{dual life-line} comparisons, and \\textbf{radar charts} for multi-dimensional compatibility scoring.
+\\item Built using Electron and React.
 \\resumeItemListEnd
-  \\vspace{-1mm}
-
-    \\resumeProject
-  {Style Max - Fashion Recommendation Platform} % Project Name
-  {Prototyped a fashion assistant using React and DeepSeek API, featuring multi-page UI and chatbot integration.} % Project Description
-  {2025.05 -- 2025.07} % Event Dates
-
-  \\resumeItemListStart
-    \\item Developed a multi-page \\textbf{React} front-end with \\textbf{Tailwind CSS}for routes like Home, Chat, Wardrobe, and Uniqlo assistant.
-    \\item Integrated \\textbf{DeepSeek API} for AI chat; enabled GitHub Pages deployment via \\textbf{HashRouter} and multi-entry \\textbf{Vite} builds.
-  \\resumeItemListEnd
-  \\vspace{-1mm}
-\\resumeProject
-    {Automated Test Generation with Gen-AI under Pytest} % Project Name
-  {Generated Pytest test cases for Python programs using gen-ai.} % Project Description
-  {2025.04} % Event Dates
-
-  \\resumeItemListStart
-    \\item This project provides a full suite of \\textbf{Pytest} test cases for the classic sorting algorithms.
-    \\item The tests were automatically generated and evaluated by human to ensure correctness, structural coverage, and robustness.
-  \\resumeItemListEnd
-    \\vspace{-1mm}
-    \\resumeProject
-      {MCU-Based Solar Street Light Controller Design} %Project Name
-      { Developed a solar-powered \\textbf{LED street lighting system} based on \\textbf{ATmega8 MCU}} %Project Name, Location Name
-      {2023.03 - 2023.06} %Event Dates
-
-      \\resumeItemListStart
-    \\item Designed \\textbf{DC-DC circuit} using \\textbf{pulse width modulation} for optimized charging.
-    \\item Implemented protection features such as \\textbf{short circuit, overload, and automatic recovery mechanisms}.
-    \\resumeItemListEnd
-    \\vspace{0mm}
-
-   
-}
-    \\resumeItemListEnd
-      
-  \\resumeSubHeadingListEnd
+\\resumeSubHeadingListEnd
 \\vspace{-6mm}
-
-%-----------Additional Information-----------------
-%\\section{\\textbf{Additional Information}}
-%\\begin{itemize}[leftmargin=0.05in, label={}]
- %   \\small{\\item{
-  %   Full G driver's license. Valid PGWP.
-   % }}
-%\\end{itemize}
- %\\vspace{-16pt}
-
-\\includepdf[pages=1]{transcript_maxzhang.pdf}
-%\\includepdf[pages=1]{transcript_neepu.pdf}
 
 %-------------------------------------------
 \\end{document}`;

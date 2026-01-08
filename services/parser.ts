@@ -1,37 +1,54 @@
 import { ResumeItem, ResumeSection } from '../types';
 
 /**
+ * Helper to find the matching closing brace index for a command starting at `startIndex`.
+ * Assumes `content[startIndex]` is '{'.
+ */
+const findBalancedEnd = (content: string, startIndex: number): number => {
+  let depth = 0;
+  for (let i = startIndex; i < content.length; i++) {
+    if (content[i] === '{') depth++;
+    else if (content[i] === '}') depth--;
+
+    if (depth === 0) return i + 1; // Return index after the closing brace
+  }
+  return -1; // Not found
+};
+
+/**
  * Parses the Master LaTeX file into sections and items using absolute indices.
  */
 export const parseMasterTex = (content: string): ResumeSection[] => {
   const sections: ResumeSection[] = [];
   
-  // Regex to find \section{...}
-  // The user's format: \section{\textbf{Title}}
-  // We use [\s\S] to capture newlines if necessary, though section headers are usually one line.
-  const sectionRegex = /\\section\{.*?\}/g;
+  // We search for \section{ or \cvsection{
+  const sectionCommandRegex = /\\(section|cvsection)\s*\{/g;
   
   let match;
-  let lastIndex = 0;
-  
-  // 1. First Pass: Identify Sections
-  // We treat the text BEFORE the first section as Preamble (not a section).
-  // The text between sections is the body of the previous section.
-  
   const sectionMatches: { start: number; end: number; title: string; fullMatch: string }[] = [];
   
-  while ((match = sectionRegex.exec(content)) !== null) {
-      const fullMatch = match[0];
-      // Extract title: \section{\textbf{Experience}} -> Experience
-      const titleMatch = fullMatch.match(/\\textbf\{(.*?)\}/);
-      const title = titleMatch ? titleMatch[1] : 'Unknown';
+  while ((match = sectionCommandRegex.exec(content)) !== null) {
+      const commandStart = match.index;
+      // match[0] ends at the opening brace of the title
+      const braceStart = commandStart + match[0].length - 1; 
       
-      sectionMatches.push({
-          start: match.index,
-          end: match.index + fullMatch.length,
-          title,
-          fullMatch
-      });
+      const commandEnd = findBalancedEnd(content, braceStart);
+      
+      if (commandEnd !== -1) {
+          const fullMatch = content.substring(commandStart, commandEnd);
+          // Extract title text roughly (remove basic latex commands)
+          // Inner text is between braceStart+1 and commandEnd-1
+          const rawTitle = content.substring(braceStart + 1, commandEnd - 1);
+          // Simple cleanup: remove \textbf{...}, \large, etc.
+          const cleanTitle = rawTitle.replace(/\\[a-zA-Z]+\{?|\}/g, '').trim();
+
+          sectionMatches.push({
+              start: commandStart,
+              end: commandEnd,
+              title: cleanTitle || 'Untitled Section',
+              fullMatch
+          });
+      }
   }
   
   // 2. Build Section Objects with Ranges
@@ -69,29 +86,13 @@ export const parseMasterTex = (content: string): ResumeSection[] => {
 const parseItems = (sectionBody: string, offset: number, sectionId: string): ResumeItem[] => {
   const items: ResumeItem[] = [];
   
-  // Patterns for Items:
-  // 1. \resumeSubheading{...}{...}{...}{...} followed by optional \resumeItemListStart...End
-  // 2. \resumeProject{...}{...}{...} followed by optional \resumeItemListStart...End
-  // 3. \item inside a generic itemize (for Skills)
-  
-  // We scan the sectionBody for these patterns.
-  
-  // Helper to find balanced braces to determine end of arguments
-  // This is complex in Regex. We will use a simpler approximation:
-  // Assuming arguments don't contain nested braces for the most part, or are on single lines.
-  // The User's file uses structured indentation, which helps.
-  
-  // Strategy: Find the START of a main item, and find the START of the NEXT main item.
-  // Everything in between belongs to the first item.
-  
-  // Detect what kind of items are in this section.
+  // Detect structure
   const hasSubheading = sectionBody.includes('\\resumeSubheading');
   const hasProject = sectionBody.includes('\\resumeProject');
   
   if (hasSubheading || hasProject) {
-      // It's a structured section (Experience / Projects)
-      // Regex for the START of an item
-      const itemStartRegex = /(\\resumeSubheading|\\resumeProject)/g;
+      // Structure: \resumeSubheading{...} OR \resumeProject{...}
+      const itemStartRegex = /(\\resumeSubheading|\\resumeProject)\s*\{/g;
       
       let match;
       const itemStarts: { index: number; type: 'subheading' | 'project' }[] = [];
@@ -99,74 +100,61 @@ const parseItems = (sectionBody: string, offset: number, sectionId: string): Res
       while ((match = itemStartRegex.exec(sectionBody)) !== null) {
           itemStarts.push({
               index: match.index,
-              type: match[0] === '\\resumeSubheading' ? 'subheading' : 'project'
+              type: match[1] === '\\resumeSubheading' ? 'subheading' : 'project'
           });
       }
       
       for (let i = 0; i < itemStarts.length; i++) {
           const start = itemStarts[i].index;
-          // The end is the start of the next item, OR the end of the list environment.
-          // In the user's file, items are inside \resumeSubHeadingListStart ... \resumeSubHeadingListEnd
-          // We can just assume the item goes until the next item start or the end of the string (section body).
-          // Refinement: If there is a \resumeSubHeadingListEnd, that's a hard stop.
           
-          let end = itemStarts[i+1] ? itemStarts[i+1].index : sectionBody.length;
+          // Determine End
+          // The item ends where the next item starts
+          // OR where the list ends (\resumeSubHeadingListEnd)
+          // OR end of section
           
-          // Check if there is a list ending between this start and the theoretical end
-          // If so, the item ends before that list ending.
-          // Actually, usually the list end comes after the last item.
-          // So for the last item, we should search for \resumeSubHeadingListEnd
+          let end = sectionBody.length;
           
-          if (!itemStarts[i+1]) {
-             const listEndMatch = sectionBody.indexOf('\\resumeSubHeadingListEnd', start);
-             if (listEndMatch !== -1) {
-                 end = listEndMatch;
-             }
+          if (itemStarts[i+1]) {
+              end = itemStarts[i+1].index;
+          } else {
+              // Last item, look for list terminator
+              const listEndMatch = sectionBody.indexOf('\\resumeSubHeadingListEnd', start);
+              if (listEndMatch !== -1) {
+                  end = listEndMatch;
+              }
           }
           
           const itemContent = sectionBody.substring(start, end);
-          const absoluteStart = offset + start;
-          const absoluteEnd = offset + end;
           
-          // Extract Title
+          // Extract Title for UI
           let title = "Item";
-          // We can just regex the first line or first few braces
-          if (itemStarts[i].type === 'subheading') {
-              // \resumeSubheading{Role}{...}{Company}{...}
-              // Note: Regex might be multi-line
-              const argsMatch = itemContent.match(/\\resumeSubheading\s*\{([^}]*)\}\s*\{[^}]*\}\s*\{([^}]*)\}/);
-              if (argsMatch) {
-                  title = `${argsMatch[1]} @ ${argsMatch[3]}`;
-              }
-          } else {
-              // \resumeProject{Name}{Desc}{Date}
-              const argsMatch = itemContent.match(/\\resumeProject\s*\{([^}]*)\}/);
-              if (argsMatch) {
-                  title = argsMatch[1];
+          // We assume standard arguments: \cmd{arg1}{arg2}...
+          // Just grab the first argument content
+          const firstBrace = itemContent.indexOf('{');
+          if (firstBrace !== -1) {
+              const argEnd = findBalancedEnd(itemContent, firstBrace);
+              if (argEnd !== -1) {
+                  const rawArg = itemContent.substring(firstBrace + 1, argEnd - 1);
+                  title = rawArg.replace(/\\[a-zA-Z]+\{?|\}/g, '').trim(); // Remove formatting
               }
           }
           
           items.push({
               id: `${sectionId}-item-${i}`,
               type: itemStarts[i].type,
-              title: title.replace(/\\textbf\{|\}/g, ''), // Clean up latex formatting in title
-              content: itemContent, // Used for debug/display if needed, but we use indices for assembly
+              title: title || 'Untitled Item',
+              content: itemContent,
               isChecked: true,
-              startIndex: absoluteStart,
-              endIndex: absoluteEnd
+              startIndex: offset + start,
+              endIndex: offset + end
           });
       }
       
   } else {
-      // Fallback for Skills (generic itemize) or Text
-      // Look for \item inside \begin{itemize} ... \end{itemize}
-      // The parser needs to be careful not to pick up \item inside sub-lists if we want block granularity.
+      // Fallback: simple \item parser for skills
+      // We look for \item[...]{...} or \item{...} or just \item ...
       
-      // For MVP as requested: "Skills: Ordinary itemize (MVP treat entire section as one module)"
-      // But let's try to support granular if possible.
-      // Skills usually: \item{ \textbf{Lang}: ... }
-      
-      const itemStartRegex = /\\item\{/g; 
+      const itemStartRegex = /\\item\s*/g; 
       let match;
       const indices: number[] = [];
       while((match = itemStartRegex.exec(sectionBody)) !== null) {
@@ -176,14 +164,19 @@ const parseItems = (sectionBody: string, offset: number, sectionId: string): Res
       if (indices.length > 0) {
           for (let i = 0; i < indices.length; i++) {
               const start = indices[i];
-              let end = indices[i+1] ? indices[i+1] : sectionBody.lastIndexOf('\\end{itemize}');
-              if (end === -1) end = sectionBody.length;
+              
+              // End is start of next \item or \end{itemize}
+              let end = indices[i+1] ? indices[i+1] : -1;
+              if (end === -1) {
+                  end = sectionBody.indexOf('\\end{itemize}', start);
+                  if (end === -1) end = sectionBody.length;
+              }
               
               const itemContent = sectionBody.substring(start, end);
               
-               // Extract "Languages" or "Technologies" from \textbf{...}
-              const titleMatch = itemContent.match(/\\textbf\{([^}]*)\}/);
-              const title = titleMatch ? titleMatch[1] : `Skill Group ${i+1}`;
+              // Extract title from \textbf{...} if present
+              const boldMatch = itemContent.match(/\\textbf\{([^}]+)\}/);
+              const title = boldMatch ? boldMatch[1] : `Bullet Point ${i+1}`;
 
               items.push({
                   id: `${sectionId}-skill-${i}`,
@@ -196,8 +189,8 @@ const parseItems = (sectionBody: string, offset: number, sectionId: string): Res
               });
           }
       } else {
-         // No items found? Just 1 big block?
-         if (sectionBody.trim().length > 10) {
+         // No items found? One big block
+         if (sectionBody.trim().length > 5) {
              items.push({
                  id: `${sectionId}-full-block`,
                  type: 'text',
@@ -235,12 +228,13 @@ export const assembleLatex = (masterContent: string, sections: ResumeSection[]):
   let newContent = masterContent;
   
   uncheckedItems.forEach(item => {
+      // Validate indices
+      if (item.startIndex < 0 || item.endIndex > newContent.length) {
+          console.warn(`[Assembler] Skipping invalid cut index for item ${item.title}`);
+          return;
+      }
       // Remove content
       newContent = newContent.slice(0, item.startIndex) + newContent.slice(item.endIndex);
-      
-      // Optional: Clean up empty lines left behind? 
-      // The item slice usually includes the commands, but might leave \vspace or surrounding glue.
-      // For now, raw deletion is safest to avoid syntax errors.
   });
   
   return newContent;
