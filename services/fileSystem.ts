@@ -67,8 +67,22 @@ class BrowserFileSystemMock implements FileSystemAPI {
 // Determines if we are running in Electron or Browser
 const getFileSystemImplementation = (): FileSystemAPI => {
   if (window.electron) {
-    // console.log("Electron detected. Using native file system.");
-    return window.electron;
+    // Safe wrapper: contextBridge objects are sometimes frozen or stale during dev.
+    // We wrap it to ensure all methods expected by Typescript actually exist at runtime.
+    const electronApi = window.electron;
+    
+    // Check if the new method exists (it might be missing if preload hasn't reloaded)
+    if (typeof electronApi.getCompilerEngine !== 'function') {
+        console.warn("⚠️ window.electron.getCompilerEngine is missing. This usually means the Preload script hasn't updated. Please Restart the Terminal.");
+        
+        // Return a proxy object that falls back to safe defaults
+        return {
+            ...electronApi,
+            getCompilerEngine: async () => 'none'
+        };
+    }
+
+    return electronApi;
   } else {
     console.log("No Electron detected. Using browser mock.");
     return new BrowserFileSystemMock();
