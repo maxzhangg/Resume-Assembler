@@ -16,6 +16,41 @@ const COMPILE_DIR_NAME = 'build';
 const CURRENT_DIR = __dirname; 
 const PRELOAD_PATH = path.join(CURRENT_DIR, 'preload.js');
 
+// --- HELPER: Fix PATH for common locations ---
+// Many users install Tectonic via Cargo or place it in local bin folders but forget 
+// to update system PATH. We preemptively add them to the process environment.
+const fixPath = () => {
+  const home = os.homedir();
+  const platform = os.platform();
+  const pathSeparator = platform === 'win32' ? ';' : ':';
+  
+  const commonPaths = [
+      path.join(home, '.cargo', 'bin'), // Standard Rust install location
+      path.join(home, 'AppData', 'Local', 'bin'), // Common Windows user bin
+      path.join('C:', 'Program Files', 'Tectonic'), // Hypothetical installer path
+      path.join('C:', 'Tools'), // Common custom tool path
+  ];
+
+  let currentPath = process.env.PATH || '';
+  let count = 0;
+  
+  commonPaths.forEach(p => {
+      // Simple check to avoid duplicates
+      if (!currentPath.includes(p)) {
+          currentPath = p + pathSeparator + currentPath;
+          count++;
+      }
+  });
+
+  process.env.PATH = currentPath;
+  if (count > 0) {
+      console.log(`[Main] 🔧 Auto-fixed PATH. Added ${count} common binary locations.`);
+  }
+};
+
+// Run this immediately
+fixPath();
+
 // --- Extensible IPC Router ---
 class IpcRouter {
   constructor() {
@@ -86,14 +121,27 @@ class IpcRouter {
 
     // --- Compiler Status Check ---
     this.handle('compiler:get-engine', async () => {
+       console.log('[Main] 🔍 Checking for compiler engines...');
+       
        const check = (cmd: string): Promise<boolean> => {
           return new Promise(resolve => {
-              exec(`${cmd} --version`, (err) => resolve(!err));
+              exec(`${cmd} --version`, (err, stdout) => {
+                  if (err) {
+                      // Don't spam logs with "not found" unless debugging, but let's print the first line of error
+                      console.log(`[Main] ❌ ${cmd} check failed: ${err.message.split('\n')[0]}`);
+                      resolve(false);
+                  } else {
+                      console.log(`[Main] ✅ Found ${cmd}: ${stdout.split('\n')[0]}`);
+                      resolve(true);
+                  }
+              });
           });
       };
       
       if (await check('tectonic')) return 'tectonic';
       if (await check('pdflatex')) return 'pdflatex';
+      
+      console.log('[Main] ⚠️ No compiler found. Current PATH starts with:', process.env.PATH?.substring(0, 200) + '...');
       return 'none';
     });
 
