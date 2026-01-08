@@ -1,6 +1,7 @@
 {
   "name": "resume-assembler",
   "version": "1.0.0",
+  "type": "module",
   "main": "dist-electron/main.js",
   "description": "LaTeX Resume Builder",
   "scripts": {

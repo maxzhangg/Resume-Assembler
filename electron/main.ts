@@ -1,8 +1,13 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { exec } from 'child_process';
 import os from 'os';
+import { fileURLToPath } from 'url';
+
+// ESM replacement for __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Use strict output for compilation
 const COMPILE_DIR_NAME = 'build';
@@ -18,7 +23,7 @@ class IpcRouter {
   }
 
   // Wrapper to handle errors consistently
-  private handle(channel: string, handler: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<any> | any) {
+  private handle(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<any> | any) {
     ipcMain.handle(channel, async (event, ...args) => {
       try {
         return await handler(event, ...args);
@@ -94,23 +99,19 @@ class IpcRouter {
         });
       };
 
-      // CRITICAL CHANGE: 
-      // Input file is 'compiled.tex' in the ROOT (cwd).
-      // Output directory is 'build'.
-      // This ensures \includepdf{transcript.pdf} works because latex finds it in cwd.
-      
       // 1. Try latexmk (Standard)
+      console.log(`[Compiler] Attempting latexmk in ${cwd}`);
       let result = await runCommand(`latexmk -pdf -interaction=nonstopmode -outdir=${COMPILE_DIR_NAME} compiled.tex`);
       
       if (!result.success) {
-        console.log("Latexmk failed/missing, attempting fallback to pdflatex...");
+        console.log("[Compiler] Latexmk failed/missing. Error:", result.stderr);
+        console.log("[Compiler] Attempting fallback to pdflatex...");
         
         // 2. Fallback: pdflatex
-        // pdflatex uses -output-directory
         const cmd = `pdflatex -interaction=nonstopmode -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
         result = await runCommand(cmd);
         
-        // Run twice for cross-references
+        // Run twice for cross-references if first run success
         if (result.success) {
             await runCommand(cmd);
         }
@@ -139,12 +140,10 @@ function createWindow() {
     show: false // Don't show until ready to prevent white flash
   });
 
-  // Critical: Check if VITE_DEV_SERVER_URL is set by the plugin
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    // Production / Build mode
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
