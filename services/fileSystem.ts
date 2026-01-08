@@ -25,6 +25,11 @@ class BrowserFileSystemMock implements FileSystemAPI {
     return this.mockStorage[path] || '';
   }
 
+  async readBuffer(path: string): Promise<string> {
+    console.log(`[Browser Mock] Read Buffer ${path}`);
+    return ""; // Return empty base64 for mock
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     console.log(`[Browser Mock Write] ${path}`);
     this.mockStorage[path] = content;
@@ -58,7 +63,7 @@ class BrowserFileSystemMock implements FileSystemAPI {
 // Determines if we are running in Electron or Browser
 const getFileSystemImplementation = (): FileSystemAPI => {
   if (window.electron) {
-    console.log("Electron detected. Using native file system.");
+    // console.log("Electron detected. Using native file system.");
     return window.electron;
   } else {
     console.log("No Electron detected. Using browser mock.");

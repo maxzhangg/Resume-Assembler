@@ -38,6 +38,12 @@ class IpcRouter {
       return await fs.readFile(filePath, 'utf-8');
     });
 
+    // New: Read file as base64 buffer (for PDF preview)
+    this.handle('fs:read-buffer', async (_, filePath: string) => {
+      const buffer = await fs.readFile(filePath);
+      return buffer.toString('base64');
+    });
+
     this.handle('fs:write-file', async (_, filePath: string, content: string) => {
       // Ensure directory exists before writing
       await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -72,15 +78,13 @@ class IpcRouter {
       await shell.openPath(filePath);
     });
 
-    // --- Compiler Handlers (Extensible for different engines) ---
+    // --- Compiler Handlers ---
     this.handle('compiler:run', async (_, cwd: string) => {
       return new Promise((resolve) => {
-        // Security: Ensure we are running inside the user's selected workspace
-        // For production, consider checking if 'cwd' is within an allowed path list.
-        
         // Command Configuration
-        // Note: Using xelatex for better font/unicode support as seen in your resume
-        const command = 'latexmk -xelatex -interaction=nonstopmode -output-directory=build compiled.tex';
+        // Note: Switched to -pdf (pdflatex) because the template uses 'cfr-lm' (Type1 fonts)
+        // which works best with standard pdflatex. -xelatex might break it.
+        const command = 'latexmk -pdf -interaction=nonstopmode -output-directory=build compiled.tex';
         
         // Execute
         exec(command, { cwd }, (error, stdout, stderr) => {
@@ -100,15 +104,16 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
+    width: 1400,
     height: 900,
     webPreferences: {
       preload: PRELOAD_PATH,
       contextIsolation: true, // Security: ON
       nodeIntegration: false, // Security: OFF
+      webSecurity: true // Keep security on
     },
     title: "Resume Assembler",
-    backgroundColor: '#f3f4f6' // Match Tailwind bg-gray-100
+    backgroundColor: '#f3f4f6'
   });
 
   if (IS_DEV) {

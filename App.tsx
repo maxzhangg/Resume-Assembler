@@ -25,22 +25,14 @@ const App: React.FC = () => {
   useEffect(() => {
     const init = async () => {
         // In real app, check if workspace was previously open
-        const path = 'C:/Work/Resume/master.tex';
-        if (await fileSystem.exists(path)) {
-            const content = await fileSystem.readFile(path);
-            const sections = parseMasterTex(content);
-            setState(prev => ({ ...prev, workspacePath: 'C:/Work/Resume', masterContent: content, sections }));
-        }
+        // For dev convenience, if master.tex exists in fixed path, load it (or allow user to pick)
+        // Note: For now we wait for user to click "Open Workspace"
     };
     init();
   }, []);
 
   // Handle Master Content Change (Manual Edit)
   const handleEditorChange = (newContent: string) => {
-      // Re-parse on significant changes or debounce (omitted for brevity)
-      // For now, just update text, parser runs on specific triggers or effects?
-      // Better: Update text, but only re-parse structure if user clicks "Refresh" or saves.
-      // To keep UI responsive, we update content state immediately.
       setState(prev => ({ ...prev, masterContent: newContent }));
   };
 
@@ -100,6 +92,13 @@ const App: React.FC = () => {
           setState(prev => ({ ...prev, statusMessage: 'Running Latexmk...' }));
           const result = await fileSystem.runCompileCommand(state.workspacePath);
           
+          if (result.success) {
+              // 4. Load PDF for Preview
+              setState(prev => ({ ...prev, statusMessage: 'Reading PDF...' }));
+              const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/output.pdf`);
+              setPdfUrl(`data:application/pdf;base64,${pdfBase64}`);
+          }
+
           setState(prev => ({ 
               ...prev, 
               isCompiling: false, 
@@ -107,10 +106,6 @@ const App: React.FC = () => {
               statusMessage: result.success ? 'Compilation Success' : 'Compilation Failed',
               lastCompileSuccess: result.success
           }));
-
-          if (result.success) {
-              setPdfUrl('dummy-url-trigger'); // In real app, this is a file:// url or blob
-          }
 
       } catch (e: any) {
           setState(prev => ({ ...prev, isCompiling: false, statusMessage: `Error: ${e.message}` }));
@@ -153,8 +148,28 @@ const App: React.FC = () => {
   const handleOpenWorkspace = async () => {
       const dir = await fileSystem.selectDirectory();
       if (dir) {
-          setState(prev => ({ ...prev, workspacePath: dir }));
-          // Load logic would go here
+          // Check if master.tex exists, if not, create sample
+          const masterPath = `${dir}/master.tex`;
+          const exists = await fileSystem.exists(masterPath);
+          
+          if (!exists) {
+              // Create sample
+              // Need to import SAMPLE_MASTER_TEX here or fetch it. 
+              // Since it's in types, we just import it at top.
+              const { SAMPLE_MASTER_TEX } = await import('./types');
+              await fileSystem.writeFile(masterPath, SAMPLE_MASTER_TEX);
+          }
+
+          const content = await fileSystem.readFile(masterPath);
+          const sections = parseMasterTex(content);
+          
+          setState(prev => ({ 
+              ...prev, 
+              workspacePath: dir, 
+              masterContent: content, 
+              sections,
+              statusMessage: 'Workspace Loaded'
+          }));
       }
   };
 
@@ -171,9 +186,6 @@ const App: React.FC = () => {
         <div className="flex gap-2">
             <button onClick={handleOpenWorkspace} className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded">
                 Open Workspace
-            </button>
-            <button className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded">
-                Settings
             </button>
         </div>
       </div>

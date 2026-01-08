@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electron', {
   readFile: (path: string) => ipcRenderer.invoke('fs:read-file', path),
+  readBuffer: (path: string) => ipcRenderer.invoke('fs:read-buffer', path),
   writeFile: (path: string, content: string) => ipcRenderer.invoke('fs:write-file', path, content),
   createDirectory: (path: string) => ipcRenderer.invoke('fs:mkdir', path),
   exists: (path: string) => ipcRenderer.invoke('fs:exists', path),

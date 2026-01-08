@@ -1,5 +1,6 @@
 export interface FileSystemAPI {
   readFile: (path: string) => Promise<string>;
+  readBuffer: (path: string) => Promise<string>; // Returns base64 string
   writeFile: (path: string, content: string) => Promise<void>;
   createDirectory: (path: string) => Promise<void>;
   exists: (path: string) => Promise<boolean>;
@@ -256,7 +257,7 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\item Developed a client-side-only web app with \\textbf{React 19}, \\textbf{TypeScript}, \\textbf{Vite}, and \\textbf{Tailwind CSS}; deployed to \\textbf{GitHub Pages}.
 \\item Implemented \\textbf{dual-language localization} (English/Simplified Chinese) with automatic browser language detection using \\textbf{Context API}.
 \\item Calculated \\textbf{True Solar Time} using longitude/latitude and performed high-precision BaZi conversions (JieQi, GanZhi) via \\textbf{lunar-javascript} for accurate Hour Pillar computation.
-\\item Integrated \\textbf{Google Gemini} (via \\textbf{@google/genai}) to generate structured year-by-year reasoning, highlighting relationship ``Golden Years'' and ``Risk Years'' based on metaphysics interactions.
+\\item Integrated \\textbf{Google Gemini} (via \\textbf{@google/genai}) to generate structured year-by-year reasoning, highlighting relationship \`\`Golden Years'' and \`\`Risk Years'' based on metaphysics interactions.
 \\item Built interactive visual analytics with \\textbf{Recharts}, including custom \\textbf{Candlestick (Love K-Line)} charts, \\textbf{dual life-line} comparisons, and \\textbf{radar charts} for multi-dimensional compatibility scoring.
 \\resumeItemListEnd
   \\vspace{-1mm}
