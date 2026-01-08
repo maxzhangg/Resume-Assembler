@@ -8,6 +8,12 @@ export interface FileSystemAPI {
   openExternal: (path: string) => Promise<void>;
 }
 
+declare global {
+  interface Window {
+    electron?: FileSystemAPI;
+  }
+}
+
 export interface ResumeItem {
   id: string;
   type: 'subheading' | 'project' | 'text';
