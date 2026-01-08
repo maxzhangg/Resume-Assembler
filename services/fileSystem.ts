@@ -58,6 +58,10 @@ class BrowserFileSystemMock implements FileSystemAPI {
   async openExternal(path: string): Promise<void> {
     alert(`[Browser Mock] Opening external: ${path}`);
   }
+
+  async getCompilerEngine(): Promise<'tectonic' | 'pdflatex' | 'none'> {
+    return 'none'; // Mock doesn't have a real compiler
+  }
 }
 
 // Determines if we are running in Electron or Browser

@@ -7,6 +7,7 @@ export interface FileSystemAPI {
   runCompileCommand: (cwd: string) => Promise<{ stdout: string; stderr: string; success: boolean }>;
   selectDirectory: () => Promise<string | null>;
   openExternal: (path: string) => Promise<void>;
+  getCompilerEngine: () => Promise<'tectonic' | 'pdflatex' | 'none'>;
 }
 
 declare global {
@@ -44,8 +45,10 @@ export interface AppState {
   compileLog: string;
   lastCompileSuccess: boolean;
   statusMessage: string;
+  compilerEngine: 'tectonic' | 'pdflatex' | 'none' | 'checking';
 }
 
+// SIMPLIFIED TEMPLATE: Removed tcolorbox to ensure stability across different TeX environments
 export const SAMPLE_MASTER_TEX: string = `%-------------------------
 % Resume in Latex
 % Author
@@ -56,7 +59,6 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 
 \\documentclass[a4paper,11pt]{article}
 \\usepackage{latexsym}
-\\usepackage{pdfpages}
 \\usepackage{xcolor}
 \\usepackage{float}
 \\usepackage{ragged2e}
@@ -74,7 +76,6 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\usepackage{fontawesome5}
 \\usepackage{multicol}
 \\usepackage{graphicx}
-\\usepackage{cfr-lm}
 \\usepackage[T1]{fontenc}
 \\setlength{\\multicolsep}{0pt} 
 \\pagestyle{fancy}
@@ -83,25 +84,6 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\renewcommand{\\headrulewidth}{0pt}
 \\renewcommand{\\footrulewidth}{0pt}
 \\geometry{left=1.4cm, top=0.8cm, right=1.2cm, bottom=1cm}
-% Adjust margins
-%\\addtolength{\\oddsidemargin}{-0.5in}
-%\\addtolength{\\evensidemargin}{-0.5in}
-%\\addtolength{\\textwidth}{1in}
-\\usepackage[most]{tcolorbox}
-\\tcbset{
-	frame code={}
-	center title,
-	left=0pt,
-	right=0pt,
-	top=0pt,
-	bottom=0pt,
-	colback=gray!20,
-	colframe=white,
-	width=\\dimexpr\\textwidth\\relax,
-	enlarge left by=-2mm,
-	boxsep=4pt,
-	arc=0pt,outer arc=0pt,
-}
 
 \\urlstyle{same}
 
@@ -109,8 +91,9 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\setlength{\\tabcolsep}{0in}
 
 % Sections formatting
+% Replaced tcolorbox with standard clean titlesec formatting
 \\titleformat{\\section}{
-  \\vspace{-4pt}\\scshape\\raggedright\\large
+  \\vspace{-4pt}\\scshape\\raggedright\\large\\bfseries
 }{}{0em}{}[\\color{black}\\titlerule \\vspace{-7pt}]
 
 %-------------------------
@@ -148,7 +131,6 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 }
 
 \\newcommand{\\resumeSubItem}[2]{\\resumeItem{#1}{#2}\\vspace{-4pt}}
-% \\renewcommand{\\labelitemii}{$\\circ$}
 \\renewcommand{\\labelitemi}{$\\vcenter{\\hbox{\\tiny$\\bullet$}}$}
 \\newcommand{\\resumeSubHeadingListStart}{\\begin{itemize}[leftmargin=*,labelsep=0mm]}
 \\newcommand{\\resumeHeadingSkillStart}{\\begin{itemize}[leftmargin=*,itemsep=1.7mm, rightmargin=2ex]}
@@ -156,13 +138,10 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\newcommand{\\resumeSubHeadingListEnd}{\\end{itemize}\\vspace{2mm}}
 \\newcommand{\\resumeHeadingSkillEnd}{\\end{itemize}\\vspace{-2mm}}
 \\newcommand{\\resumeItemListEnd}{\\end{itemize}\\end{justify}\\vspace{-2mm}}
-\\newcommand{\\cvsection}[1]{%
-\\vspace{2mm}
-\\begin{tcolorbox}
-    \\textbf{\\large #1}
-\\end{tcolorbox}
-    \\vspace{-4mm}
-}
+
+% Alias cvsection to section for compatibility
+\\newcommand{\\cvsection}[1]{\\section{#1}}
+
 \\newcolumntype{L}{>{\\raggedright\\arraybackslash}X}%
 \\newcolumntype{R}{>{\\raggedleft\\arraybackslash}X}%
 \\newcolumntype{C}{>{\\centering\\arraybackslash}X}%
@@ -173,7 +152,6 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 %%%%%% DEFINE ELEMENTS HERE %%%%%%%
 \\newcommand{\\name}{Your Name} % Your Name
 \\newcommand{\\course}{Computer Science} % Your Program
-%\\newcommand{\\roll}{xxxxxxx} % Your Roll No.
 \\newcommand{\\phone}{123-456-7890} % Your Phone Number
 \\newcommand{\\emaila}{email@example.com} %Email 1
 
@@ -191,7 +169,7 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 }
 \\vspace{-4mm}
 %-----------Technical skills-----------------
-\\section{\\textbf{Technical Skills}}
+\\section{Technical Skills}
 \\begin{itemize}[leftmargin=0.05in, label={}]
     \\small{\\item{
      \\textbf{Languages}{: Python, JavaScript, TypeScript, Java} \\\\  
@@ -201,7 +179,7 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\vspace{-20pt}
 
 %-----------EXPERIENCE-----------------
-\\section{\\textbf{Experience}}
+\\section{Experience}
   \\resumeSubHeadingListStart
     \\resumeSubheading
       {Software Engineer}{City}
@@ -215,7 +193,7 @@ export const SAMPLE_MASTER_TEX: string = `%-------------------------
 \\vspace{-5.5mm}
 
 %-----------PROJECTS-----------------
-\\section{\\textbf{Projects}}
+\\section{Projects}
 \\vspace{-2mm}
 \\resumeSubHeadingListStart
 \\resumeProject

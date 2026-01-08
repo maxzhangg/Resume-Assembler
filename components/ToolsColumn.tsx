@@ -10,13 +10,28 @@ interface Props {
   onCompile: () => void;
   isCompiling: boolean;
   onAiMerge: (output: string) => void;
+  compilerEngine: 'tectonic' | 'pdflatex' | 'none' | 'checking';
 }
 
 const ToolsColumn: React.FC<Props> = ({ 
-  sections, onToggleItem, jd, onJdChange, onGeneratePrompt, onCompile, isCompiling, onAiMerge
+  sections, onToggleItem, jd, onJdChange, onGeneratePrompt, onCompile, isCompiling, onAiMerge, compilerEngine
 }) => {
   const [activeTab, setActiveTab] = useState<'modules' | 'ai'>('modules');
   const [aiInput, setAiInput] = useState('');
+
+  const getEngineBadge = () => {
+    switch (compilerEngine) {
+      case 'tectonic':
+        return <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full border border-indigo-200">🚀 Tectonic</span>;
+      case 'pdflatex':
+        return <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full border border-blue-200">⚙️ MiKTeX/TeXLive</span>;
+      case 'none':
+        return <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200">⚠️ No Compiler</span>;
+      case 'checking':
+      default:
+        return <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">...</span>;
+    }
+  };
 
   return (
     <div className="flex flex-col h-full bg-white">
@@ -40,7 +55,10 @@ const ToolsColumn: React.FC<Props> = ({
         {activeTab === 'modules' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-                <h3 className="font-bold text-gray-700">Resume Sections</h3>
+                <div className="flex flex-col">
+                  <h3 className="font-bold text-gray-700">Resume Sections</h3>
+                  <div className="mt-1">{getEngineBadge()}</div>
+                </div>
                 <button 
                     onClick={onCompile}
                     disabled={isCompiling}

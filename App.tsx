@@ -17,7 +17,8 @@ const App: React.FC = () => {
     isCompiling: false,
     compileLog: 'Ready.',
     lastCompileSuccess: false,
-    statusMessage: 'Ready'
+    statusMessage: 'Ready',
+    compilerEngine: 'checking'
   });
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -34,6 +35,13 @@ const App: React.FC = () => {
           });
       });
   };
+
+  useEffect(() => {
+    // Check compiler engine on startup
+    fileSystem.getCompilerEngine().then(engine => {
+      setState(prev => ({ ...prev, compilerEngine: engine }));
+    });
+  }, []);
 
   const handleEditorChange = (newContent: string) => {
       setState(prev => ({ ...prev, workingContent: newContent }));
@@ -272,6 +280,7 @@ const App: React.FC = () => {
                 onCompile={handleCompile}
                 isCompiling={state.isCompiling}
                 onAiMerge={handleAiMerge}
+                compilerEngine={state.compilerEngine}
             />
         </div>
       </div>

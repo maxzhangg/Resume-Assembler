@@ -84,13 +84,33 @@ class IpcRouter {
       await shell.openPath(filePath);
     });
 
+    // --- Compiler Status Check ---
+    this.handle('compiler:get-engine', async () => {
+       const check = (cmd: string): Promise<boolean> => {
+          return new Promise(resolve => {
+              exec(`${cmd} --version`, (err) => resolve(!err));
+          });
+      };
+      
+      if (await check('tectonic')) return 'tectonic';
+      if (await check('pdflatex')) return 'pdflatex';
+      return 'none';
+    });
+
     // --- Compiler Handlers ---
     this.handle('compiler:run', async (_, cwd: string) => {
+      
+      const checkCommand = (cmd: string): Promise<boolean> => {
+          return new Promise(resolve => {
+              exec(`${cmd} --version`, (err) => resolve(!err));
+          });
+      };
+
       const runCommand = (cmd: string): Promise<{success: boolean, stdout: string, stderr: string}> => {
         return new Promise((resolve) => {
           // Use a large buffer to prevent crash on verbose logs
-          // CWD is strictly set to the Workspace Root provided by renderer
-          exec(cmd, { cwd, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+          console.log(`[Compiler] Executing: ${cmd}`);
+          exec(cmd, { cwd, maxBuffer: 1024 * 1024 * 20 }, (error, stdout, stderr) => {
             resolve({
               success: !error,
               stdout: stdout || '',
@@ -100,25 +120,60 @@ class IpcRouter {
         });
       };
 
-      // STRICT REQUIREMENT: Input file is 'compiled.tex' (in CWD root)
-      // Output is directed to 'build' subdirectory.
-      // This ensures \includepdf{./doc.pdf} works because CWD is root.
-      console.log(`[Compiler] Attempting latexmk in ${cwd}`);
-      let result = await runCommand(`latexmk -pdf -interaction=nonstopmode -outdir=${COMPILE_DIR_NAME} compiled.tex`);
+      const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+      const isWin = os.platform() === 'win32';
+      const interactionFlag = '-interaction=nonstopmode';
       
-      if (!result.success) {
-        console.log("[Compiler] Latexmk failed/missing. Error:", result.stderr);
-        console.log("[Compiler] Attempting fallback to pdflatex...");
-        
-        // Fallback: pdflatex
-        // Note: pdflatex uses -output-directory, latexmk uses -outdir
-        const cmd = `pdflatex -interaction=nonstopmode -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
-        result = await runCommand(cmd);
-        
-        // Run twice for cross-references if first run success
-        if (result.success) {
-            await runCommand(cmd);
-        }
+      // --- STRATEGY 0: Tectonic (The Modern Alternative) ---
+      const hasTectonic = await checkCommand('tectonic');
+      
+      if (hasTectonic) {
+           console.log("[Compiler] Tectonic detected. Using it as primary engine.");
+           // ensure build dir exists
+           await fs.mkdir(path.join(cwd, COMPILE_DIR_NAME), { recursive: true });
+           const tectonicCmd = `tectonic -X compile compiled.tex --outdir ${COMPILE_DIR_NAME} --keep-logs`;
+           return await runCommand(tectonicCmd);
+      }
+
+      // --- STRATEGY 1: Standard Pdflatex/Latexmk (Legacy) ---
+      const getCmd = (enableInstaller: boolean, useLatexmk: boolean) => {
+          const installerFlag = (isWin && enableInstaller) ? '--enable-installer' : '';
+          
+          if (useLatexmk) {
+              return `latexmk -pdf -pdflatex="pdflatex ${interactionFlag} ${installerFlag} %O %S" -outdir=${COMPILE_DIR_NAME} compiled.tex`;
+          } else {
+              return `pdflatex ${interactionFlag} ${installerFlag} -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
+          }
+      };
+
+      console.log(`[Compiler] Step 1: Attempting clean compile (No auto-install)...`);
+      let result = await runCommand(getCmd(false, true));
+
+      const logCombined = result.stdout + "\n" + result.stderr;
+      
+      const isMissingPackage = logCombined.includes("! LaTeX Error: File") && logCombined.includes("not found");
+      const latexmkFailed = !result.success && !isMissingPackage; 
+
+      if (!result.success && isMissingPackage) {
+          console.log(`[Compiler] Missing packages detected. Step 2: Compile WITH auto-install...`);
+          result = await runCommand(getCmd(true, true));
+
+          if (!result.success && (result.stderr.includes("lock") || result.stdout.includes("lock"))) {
+              console.log(`[Compiler] MiKTeX Lock detected. Waiting 3s for cleanup...`);
+              await wait(3000);
+              console.log(`[Compiler] Step 3: Retry auto-install...`);
+              result = await runCommand(getCmd(true, true));
+          }
+      } 
+      else if (latexmkFailed) {
+          console.log(`[Compiler] Latexmk failed execution. Step 2: Fallback to direct pdflatex...`);
+          result = await runCommand(getCmd(false, false));
+          
+          if (!result.success && (result.stdout.includes("! LaTeX Error: File") || result.stderr.includes("! LaTeX Error: File"))) {
+             console.log(`[Compiler] Pdflatex missing packages. Step 3: Pdflatex WITH auto-install...`);
+             result = await runCommand(getCmd(true, false));
+          }
+          if (result.success) await runCommand(getCmd(false, false));
       }
 
       return result;

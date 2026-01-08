@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('electron', {
   runCompileCommand: (cwd: string) => ipcRenderer.invoke('compiler:run', cwd),
   selectDirectory: () => ipcRenderer.invoke('dialog:select-directory'),
   openExternal: (path: string) => ipcRenderer.invoke('shell:open-external', path),
+  getCompilerEngine: () => ipcRenderer.invoke('compiler:get-engine'),
 });
