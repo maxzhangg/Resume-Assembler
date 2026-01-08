@@ -4,14 +4,12 @@ import fs from 'fs/promises';
 import { exec } from 'child_process';
 import os from 'os';
 
-// Fix for missing __dirname definition in some TypeScript configurations
-declare var __dirname: string;
+// Use strict output for compilation
+const COMPILE_DIR_NAME = 'build';
 
-// --- Configuration & Constants ---
-const IS_DEV = process.env.NODE_ENV === 'development' || !app.isPackaged;
-const PRELOAD_PATH = path.join(__dirname, 'preload.js');
-const RENDERER_DEV_URL = 'http://localhost:3000';
-const RENDERER_PROD_PATH = path.join(__dirname, '../build/index.html');
+// Fix for missing __dirname definition in some build contexts
+const CURRENT_DIR = __dirname; 
+const PRELOAD_PATH = path.join(CURRENT_DIR, 'preload.js');
 
 // --- Extensible IPC Router ---
 class IpcRouter {
@@ -37,7 +35,6 @@ class IpcRouter {
       return await fs.readFile(filePath, 'utf-8');
     });
 
-    // Read file as base64 buffer (for PDF preview)
     this.handle('fs:read-buffer', async (_, filePath: string) => {
       try {
         const buffer = await fs.readFile(filePath);
@@ -84,10 +81,10 @@ class IpcRouter {
 
     // --- Compiler Handlers ---
     this.handle('compiler:run', async (_, cwd: string) => {
-      
       const runCommand = (cmd: string): Promise<{success: boolean, stdout: string, stderr: string}> => {
         return new Promise((resolve) => {
-          exec(cmd, { cwd }, (error, stdout, stderr) => {
+          // Use a large buffer to prevent crash on verbose logs
+          exec(cmd, { cwd, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             resolve({
               success: !error,
               stdout: stdout || '',
@@ -97,17 +94,24 @@ class IpcRouter {
         });
       };
 
-      // Strategy: Try latexmk first (best for dependencies), fallback to pdflatex (standard, no perl needed)
-      // Note: We use -interaction=nonstopmode to prevent hanging on errors
-      
-      // 1. Try latexmk
-      let result = await runCommand('latexmk -pdf -interaction=nonstopmode -output-directory=build compiled.tex');
+      // 1. Try latexmk (Standard)
+      // -interaction=nonstopmode: Don't pause on errors
+      // -pdf: Generate PDF
+      // -outdir: Specify output directory
+      let result = await runCommand(`latexmk -pdf -interaction=nonstopmode -outdir=${COMPILE_DIR_NAME} compiled.tex`);
       
       if (!result.success) {
-        console.log("Latexmk failed or not found, falling back to pdflatex...");
-        // 2. Fallback to pdflatex (Note: output-directory flag syntax varies, strictly typically -output-directory works for MiKTeX/TeXLive)
-        // We run it twice to resolve basic references if possible, though mostly once is enough for preview
-        result = await runCommand('pdflatex -interaction=nonstopmode -output-directory=build compiled.tex');
+        console.log("Latexmk failed/missing, attempting fallback to pdflatex...");
+        
+        // 2. Fallback: pdflatex
+        // Note: -output-directory is the flag for pdflatex (latexmk uses -outdir)
+        const cmd = `pdflatex -interaction=nonstopmode -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
+        result = await runCommand(cmd);
+        
+        // Run twice for cross-references if the first one succeeded (basic check)
+        if (result.success) {
+            await runCommand(cmd);
+        }
       }
 
       return result;
@@ -124,20 +128,27 @@ function createWindow() {
     height: 900,
     webPreferences: {
       preload: PRELOAD_PATH,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true // Keep security on
+      contextIsolation: true, // MUST be true for contextBridge to work
+      nodeIntegration: false, // Security best practice
+      webSecurity: false // Temporary allowed for loading local file:// PDFs in iframe if needed
     },
     title: "Resume Assembler",
-    backgroundColor: '#f3f4f6'
+    backgroundColor: '#f3f4f6',
+    show: false // Don't show until ready to prevent white flash
   });
 
-  if (IS_DEV) {
-    mainWindow.loadURL(RENDERER_DEV_URL);
+  // Critical: Check if VITE_DEV_SERVER_URL is set by the plugin
+  if (process.env.VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(RENDERER_PROD_PATH);
+    // Production / Build mode
+    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);

@@ -9,17 +9,21 @@ export default defineConfig({
     react(),
     electron({
       main: {
-        // Shortcut of `build.lib.entry`.
+        // Entry point for the main process
         entry: 'electron/main.ts',
       },
       preload: {
-        // Shortcut of `build.rollupOptions.input`.
-        // Preload scripts may contain Web assets, so use the `build.rollupOptions.input` instead `build.lib.entry`.
-        input: path.join(__dirname, 'electron/preload.ts'),
+        // CORRECT WAY to reference preload in Vite:
+        // Use process.cwd() or relative path to ensure it resolves correctly during build
+        input: 'electron/preload.ts', 
       },
-      // Ployfill the Electron and Node.js built-in modules for Renderer process.
-      // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
+      // Polyfill the Electron and Node.js built-in modules for Renderer process
       renderer: {},
     }),
   ],
+  server: {
+    // Ensure the port is fixed so Electron knows where to look if not using env vars
+    port: 3000,
+    strictPort: true,
+  }
 })
