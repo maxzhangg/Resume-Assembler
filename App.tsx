@@ -23,15 +23,23 @@ const App: React.FC = () => {
 
   // Initial Load (Simulating opening a workspace)
   useEffect(() => {
-    const init = async () => {
-        // In real app, check if workspace was previously open
-    };
-    init();
+    // Optional: Load last workspace from local storage if needed
   }, []);
 
-  // Handle Master Content Change (Manual Edit)
+  // Handle Master Content Change (Manual Edit - In Memory)
   const handleEditorChange = (newContent: string) => {
       setState(prev => ({ ...prev, masterContent: newContent }));
+  };
+
+  // Handle Save to Disk
+  const handleSaveMaster = async () => {
+      if (!state.workspacePath) return;
+      try {
+        await fileSystem.writeFile(`${state.workspacePath}/master.tex`, state.masterContent);
+        setState(prev => ({ ...prev, statusMessage: 'Saved master.tex successfully.' }));
+      } catch (e: any) {
+        setState(prev => ({ ...prev, statusMessage: `Error saving: ${e.message}` }));
+      }
   };
 
   // Re-parse sections when masterContent changes
@@ -75,26 +83,30 @@ const App: React.FC = () => {
   const handleCompile = async () => {
       if (!state.workspacePath) return;
 
-      setState(prev => ({ ...prev, isCompiling: true, statusMessage: 'Generating compiled.tex...' }));
+      setState(prev => ({ ...prev, isCompiling: true, statusMessage: 'Generating compiled.tex from current editor state...' }));
       setPdfUrl(null); // Clear previous PDF while compiling
 
       try {
-          // 1. Assemble
+          // 1. Assemble from In-Memory State (not disk)
+          // This respects the "Compiled is temp tex" requirement
           const compiledTex = assembleLatex(state.masterContent, state.sections);
           
-          // 2. Write to build folder
-          await fileSystem.createDirectory(`${state.workspacePath}/build`);
-          await fileSystem.writeFile(`${state.workspacePath}/build/compiled.tex`, compiledTex);
+          // 2. Write compiled.tex to disk (Temporary build artifact)
+          await fileSystem.writeFile(`${state.workspacePath}/compiled.tex`, compiledTex);
           
+          // Ensure build directory exists for output
+          await fileSystem.createDirectory(`${state.workspacePath}/build`);
+
           // 3. Run Command
-          setState(prev => ({ ...prev, statusMessage: 'Running LaTeX Compiler (latexmk/pdflatex)...' }));
+          setState(prev => ({ ...prev, statusMessage: 'Running LaTeX Compiler...' }));
           const result = await fileSystem.runCompileCommand(state.workspacePath);
           
           if (result.success) {
               // 4. Load PDF for Preview
               setState(prev => ({ ...prev, statusMessage: 'Reading PDF...' }));
               try {
-                const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/output.pdf`);
+                // PDF is output to build/output.pdf because we use -outdir=build
+                const pdfBase64 = await fileSystem.readBuffer(`${state.workspacePath}/build/compiled.pdf`);
                 setPdfUrl(`data:application/pdf;base64,${pdfBase64}`);
                 setState(prev => ({ 
                     ...prev, 
@@ -107,7 +119,7 @@ const App: React.FC = () => {
                  setState(prev => ({ 
                     ...prev, 
                     isCompiling: false, 
-                    statusMessage: 'Compilation successful, but output.pdf is missing or empty.',
+                    statusMessage: 'Compilation successful, but build/compiled.pdf is missing.',
                     lastCompileSuccess: false
                 }));
               }
@@ -133,7 +145,7 @@ const App: React.FC = () => {
   };
 
   const handleAiMerge = async (aiOutput: string) => {
-      // 1. Backup
+      // 1. Backup before merge
       if (state.workspacePath) {
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
           await fileSystem.createDirectory(`${state.workspacePath}/backups`);
@@ -142,15 +154,18 @@ const App: React.FC = () => {
           await fileSystem.writeFile(`${state.workspacePath}/patches/patch-${timestamp}.txt`, aiOutput);
       }
 
-      // 2. Safe Merge
+      // 2. Safe Merge (Memory)
       const result = safeMergeAIOutput(state.masterContent, aiOutput);
 
       if (result.success) {
-          setState(prev => ({ ...prev, masterContent: result.newContent, statusMessage: 'AI Merge Successful. Saved backup.' }));
-          // Trigger save
+          // Update Memory
+          setState(prev => ({ ...prev, masterContent: result.newContent, statusMessage: 'AI Merge Successful. Master saved automatically.' }));
+          
+          // 3. Save to Disk (AI Merge implies a commit to master)
           if (state.workspacePath) {
               await fileSystem.writeFile(`${state.workspacePath}/master.tex`, result.newContent);
           }
+          
           // Optionally auto-compile
           setTimeout(handleCompile, 500);
       } else {
@@ -162,10 +177,10 @@ const App: React.FC = () => {
   const handleOpenWorkspace = async () => {
       const dir = await fileSystem.selectDirectory();
       if (dir) {
-          // Check if master.tex exists, if not, create sample
           const masterPath = `${dir}/master.tex`;
           const exists = await fileSystem.exists(masterPath);
           
+          // "Open workspace should find existing tex... use as template"
           if (!exists) {
               const { SAMPLE_MASTER_TEX } = await import('./types');
               await fileSystem.writeFile(masterPath, SAMPLE_MASTER_TEX);
@@ -207,6 +222,7 @@ const App: React.FC = () => {
             <EditorColumn 
                 content={state.masterContent} 
                 onChange={handleEditorChange} 
+                onSave={handleSaveMaster}
             />
         </div>
         <div className="col-span-5 h-full overflow-hidden">

@@ -94,21 +94,23 @@ class IpcRouter {
         });
       };
 
+      // CRITICAL CHANGE: 
+      // Input file is 'compiled.tex' in the ROOT (cwd).
+      // Output directory is 'build'.
+      // This ensures \includepdf{transcript.pdf} works because latex finds it in cwd.
+      
       // 1. Try latexmk (Standard)
-      // -interaction=nonstopmode: Don't pause on errors
-      // -pdf: Generate PDF
-      // -outdir: Specify output directory
       let result = await runCommand(`latexmk -pdf -interaction=nonstopmode -outdir=${COMPILE_DIR_NAME} compiled.tex`);
       
       if (!result.success) {
         console.log("Latexmk failed/missing, attempting fallback to pdflatex...");
         
         // 2. Fallback: pdflatex
-        // Note: -output-directory is the flag for pdflatex (latexmk uses -outdir)
+        // pdflatex uses -output-directory
         const cmd = `pdflatex -interaction=nonstopmode -output-directory=${COMPILE_DIR_NAME} compiled.tex`;
         result = await runCommand(cmd);
         
-        // Run twice for cross-references if the first one succeeded (basic check)
+        // Run twice for cross-references
         if (result.success) {
             await runCommand(cmd);
         }
