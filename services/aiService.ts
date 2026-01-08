@@ -2,9 +2,10 @@ import { ResumeSection } from '../types';
 
 export const generatePrompt = (jd: string, sections: ResumeSection[]): string => {
   // Extract current LaTeX for context
+  // User headers: Technical Skills, Experience, Projects
   const experienceSection = sections.find(s => s.title.toLowerCase().includes('experience'));
-  const projectSection = sections.find(s => s.title.toLowerCase().includes('project'));
-  const skillSection = sections.find(s => s.title.toLowerCase().includes('skill'));
+  const projectSection = sections.find(s => s.title.toLowerCase().includes('projects'));
+  const skillSection = sections.find(s => s.title.toLowerCase().includes('skills'));
 
   const expLatex = experienceSection?.rawContent || "(No Experience Section Found)";
   const projLatex = projectSection?.rawContent || "(No Project Section Found)";
@@ -33,20 +34,21 @@ ${projLatex}
 INSTRUCTIONS:
 1. Analyze the JD keywords.
 2. Rewrite the bullet points in Experience and Projects to highlight relevance to the JD. 
-3. Reorder skills or add relevant keywords from the JD *only if* they are synonymous with my existing skills (e.g. if I have "React", adding "React.js" is okay, but do not add "Java" if I don't have it).
+3. Reorder skills or add relevant keywords from the JD *only if* they are synonymous with my existing skills.
 4. **DO NOT** invent numbers, companies, or projects. Only rephrase.
-5. **STRICT OUTPUT FORMAT**: You must return exactly three blocks. Do not add explanations.
+5. **CRITICAL**: Return the content such that it can be directly replaced into the \\section block.
+6. **STRICT OUTPUT FORMAT**: You must return exactly three blocks. Do not add explanations.
 
 %%%BEGIN_SKILLS%%%
-(Put the full modified Skills \\section content here or just the itemize block)
+(Put the full modified Technical Skills section content here. Do NOT include the \\section{...} header, just the \\begin{itemize}...)
 %%%END_SKILLS%%%
 
 %%%BEGIN_EXPERIENCE%%%
-(Put the full modified Experience \\section content here)
+(Put the full modified Experience section content here. Do NOT include the \\section{...} header, just the \\resumeSubHeadingListStart...)
 %%%END_EXPERIENCE%%%
 
 %%%BEGIN_PROJECTS%%%
-(Put the full modified Projects \\section content here)
+(Put the full modified Projects section content here. Do NOT include the \\section{...} header, just the \\resumeSubHeadingListStart...)
 %%%END_PROJECTS%%%
 `;
 };
@@ -87,42 +89,33 @@ export const safeMergeAIOutput = (originalMaster: string, aiOutput: string): { s
       const newSectionContent = match[1].trim();
       
       // 3. Locate and Replace in Master
-      // This requires the master to have standard section headers like \section{\textbf{Experience}}
-      // We will replace everything from the header down to the next section start.
+      // We look for the section header, then replace everything until the next section.
       
-      let sectionName = "";
-      if (block.name === 'SKILLS') sectionName = "Skills";
-      else if (block.name === 'EXPERIENCE') sectionName = "Experience";
-      else if (block.name === 'PROJECTS') sectionName = "Projects";
+      let sectionTitleKeyword = "";
+      if (block.name === 'SKILLS') sectionTitleKeyword = "Technical Skills"; // Matches user's tex
+      else if (block.name === 'EXPERIENCE') sectionTitleKeyword = "Experience";
+      else if (block.name === 'PROJECTS') sectionTitleKeyword = "Projects";
 
-      const sectionStartRegex = new RegExp(`(\\\\section\\{\\\\textbf\\{${sectionName}\\}\\})`);
-      const splitBySection = mergedContent.split(sectionStartRegex);
+      // Regex to find \section{\textbf{Technical Skills}}
+      const headerRegex = new RegExp(`\\\\section\\{\\\\textbf\\{${sectionTitleKeyword}\\}\\}`);
+      const headerMatch = mergedContent.match(headerRegex);
       
-      if (splitBySection.length >= 3) {
-          // splitBySection[0] = before header
-          // splitBySection[1] = header
-          // splitBySection[2] = body + rest of doc
+      if (headerMatch && headerMatch.index !== undefined) {
+          const headerEndIndex = headerMatch.index + headerMatch[0].length;
           
-          const rest = splitBySection[2];
-          const nextSectionRegex = /(\\section\{|\\end\{document\})/;
-          const nextMatch = rest.match(nextSectionRegex);
+          // Find the end of this section (Next section or document end)
+          const remaining = mergedContent.substring(headerEndIndex);
+          const nextSectionMatch = remaining.match(/(\\section\{|\\end\{document\})/);
           
-          if (nextMatch && nextMatch.index !== undefined) {
-              const contentToReplace = rest.substring(0, nextMatch.index);
-              const afterContent = rest.substring(nextMatch.index);
+          if (nextSectionMatch && nextSectionMatch.index !== undefined) {
+              const bodyEndIndex = headerEndIndex + nextSectionMatch.index;
               
-              // Only replace if the AI returned content looks like it contains items or lists
-              if (newSectionContent.includes('\\item')) {
-                   // Verify if AI included the \section header in the block. Ideally prompt asks for content.
-                   // If AI included \section{}, strip it.
-                   let cleanNewContent = newSectionContent;
-                   if (cleanNewContent.startsWith('\\section')) {
-                       // remove the first line
-                       cleanNewContent = cleanNewContent.replace(/^\\section\{.*?\}/, '');
-                   }
-                   
-                   mergedContent = splitBySection[0] + splitBySection[1] + "\n" + cleanNewContent + "\n" + afterContent;
-              }
+              // Construct new content
+              // We keep the header, insert new body, then the rest.
+              mergedContent = 
+                  mergedContent.substring(0, headerEndIndex) + 
+                  "\n" + newSectionContent + "\n" + 
+                  mergedContent.substring(bodyEndIndex);
           }
       }
     }

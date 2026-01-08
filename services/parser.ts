@@ -1,210 +1,247 @@
 import { ResumeItem, ResumeSection } from '../types';
 
 /**
- * Parses the Master LaTeX file into sections and items.
- * Uses Regex strategies tailored to the prompt's specific LaTeX format.
+ * Parses the Master LaTeX file into sections and items using absolute indices.
  */
 export const parseMasterTex = (content: string): ResumeSection[] => {
   const sections: ResumeSection[] = [];
   
-  // 1. Split by \section command
-  // Regex: matches \section{...} and captures the rest until the next \section
-  const sectionSplitRegex = /(\\section\{.*?\})/g;
+  // Regex to find \section{...}
+  // The user's format: \section{\textbf{Title}}
+  // We use [\s\S] to capture newlines if necessary, though section headers are usually one line.
+  const sectionRegex = /\\section\{.*?\}/g;
   
-  // We need to keep the delimiters, so we use split and filter
-  const parts = content.split(sectionSplitRegex);
-
-  // The first part is usually the preamble (imports, etc)
-  // For the purpose of the Assembler, we only care about "selectable" sections.
-  // However, the Preamble is implicitly always "checked" in the final rebuild, 
-  // but here we just want to extract structure for the UI.
-
-  let currentSection: ResumeSection | null = null;
-
-  parts.forEach((part) => {
-    if (!part.trim()) return;
-
-    if (part.startsWith('\\section')) {
-      // New Section Start
-      const titleMatch = part.match(/\\textbf\{(.*?)\}/);
-      const title = titleMatch ? titleMatch[1] : 'Unknown Section';
+  let match;
+  let lastIndex = 0;
+  
+  // 1. First Pass: Identify Sections
+  // We treat the text BEFORE the first section as Preamble (not a section).
+  // The text between sections is the body of the previous section.
+  
+  const sectionMatches: { start: number; end: number; title: string; fullMatch: string }[] = [];
+  
+  while ((match = sectionRegex.exec(content)) !== null) {
+      const fullMatch = match[0];
+      // Extract title: \section{\textbf{Experience}} -> Experience
+      const titleMatch = fullMatch.match(/\\textbf\{(.*?)\}/);
+      const title = titleMatch ? titleMatch[1] : 'Unknown';
       
-      currentSection = {
-        id: `sec-${Date.now()}-${Math.random()}`,
-        title,
-        rawContent: part, // NOTE: In a more complex parser, we'd store the header separately
-        items: []
-      };
-      sections.push(currentSection);
-    } else if (currentSection) {
-      // This is the content body of the section
-      currentSection.rawContent += part;
+      sectionMatches.push({
+          start: match.index,
+          end: match.index + fullMatch.length,
+          title,
+          fullMatch
+      });
+  }
+  
+  // 2. Build Section Objects with Ranges
+  for (let i = 0; i < sectionMatches.length; i++) {
+      const current = sectionMatches[i];
+      const next = sectionMatches[i + 1];
       
-      // 2. Parse Items within the section body
-      const parsedItems = parseItems(part, currentSection.id);
-      currentSection.items = parsedItems;
-    }
-  });
-
+      const bodyStart = current.end;
+      const bodyEnd = next ? next.start : content.lastIndexOf('\\end{document}');
+      
+      // If no \end{document}, go to end of string
+      const finalEnd = bodyEnd === -1 ? content.length : bodyEnd;
+      
+      const rawContent = content.substring(current.start, finalEnd);
+      const bodyContent = content.substring(bodyStart, finalEnd);
+      
+      const sectionId = `sec-${i}`;
+      
+      // 3. Parse Items within this range
+      const items = parseItems(bodyContent, bodyStart, sectionId);
+      
+      sections.push({
+          id: sectionId,
+          title: current.title,
+          rawContent,
+          startIndex: current.start,
+          endIndex: finalEnd,
+          items
+      });
+  }
+  
   return sections;
 };
 
-const parseItems = (sectionContent: string, sectionId: string): ResumeItem[] => {
+const parseItems = (sectionBody: string, offset: number, sectionId: string): ResumeItem[] => {
   const items: ResumeItem[] = [];
   
-  // Strategy: Find anchors (\resumeSubheading, \resumeProject) 
-  // and the subsequent \resumeItemListStart ... End
+  // Patterns for Items:
+  // 1. \resumeSubheading{...}{...}{...}{...} followed by optional \resumeItemListStart...End
+  // 2. \resumeProject{...}{...}{...} followed by optional \resumeItemListStart...End
+  // 3. \item inside a generic itemize (for Skills)
   
-  // We will iterate through the string to find blocks
-  // This is a simplified state-machine approach
+  // We scan the sectionBody for these patterns.
   
-  const blocks = sectionContent.split(/(\\(?:resumeSubheading|resumeProject|item))/g);
+  // Helper to find balanced braces to determine end of arguments
+  // This is complex in Regex. We will use a simpler approximation:
+  // Assuming arguments don't contain nested braces for the most part, or are on single lines.
+  // The User's file uses structured indentation, which helps.
   
-  // This split is a bit aggressive, we need to reconstruct usable blocks.
-  // Better strategy: Use regex exec to find start indices
+  // Strategy: Find the START of a main item, and find the START of the NEXT main item.
+  // Everything in between belongs to the first item.
   
-  const itemRegex = /(\\(?:resumeSubheading|resumeProject)(?:\{[^{}]*\}){2,4}[\s\S]*?(?:\\resumeItemListEnd|\\resumeSubHeadingListEnd))/g;
+  // Detect what kind of items are in this section.
+  const hasSubheading = sectionBody.includes('\\resumeSubheading');
+  const hasProject = sectionBody.includes('\\resumeProject');
   
-  let match;
-  let remainingContent = sectionContent;
+  if (hasSubheading || hasProject) {
+      // It's a structured section (Experience / Projects)
+      // Regex for the START of an item
+      const itemStartRegex = /(\\resumeSubheading|\\resumeProject)/g;
+      
+      let match;
+      const itemStarts: { index: number; type: 'subheading' | 'project' }[] = [];
+      
+      while ((match = itemStartRegex.exec(sectionBody)) !== null) {
+          itemStarts.push({
+              index: match.index,
+              type: match[0] === '\\resumeSubheading' ? 'subheading' : 'project'
+          });
+      }
+      
+      for (let i = 0; i < itemStarts.length; i++) {
+          const start = itemStarts[i].index;
+          // The end is the start of the next item, OR the end of the list environment.
+          // In the user's file, items are inside \resumeSubHeadingListStart ... \resumeSubHeadingListEnd
+          // We can just assume the item goes until the next item start or the end of the string (section body).
+          // Refinement: If there is a \resumeSubHeadingListEnd, that's a hard stop.
+          
+          let end = itemStarts[i+1] ? itemStarts[i+1].index : sectionBody.length;
+          
+          // Check if there is a list ending between this start and the theoretical end
+          // If so, the item ends before that list ending.
+          // Actually, usually the list end comes after the last item.
+          // So for the last item, we should search for \resumeSubHeadingListEnd
+          
+          if (!itemStarts[i+1]) {
+             const listEndMatch = sectionBody.indexOf('\\resumeSubHeadingListEnd', start);
+             if (listEndMatch !== -1) {
+                 end = listEndMatch;
+             }
+          }
+          
+          const itemContent = sectionBody.substring(start, end);
+          const absoluteStart = offset + start;
+          const absoluteEnd = offset + end;
+          
+          // Extract Title
+          let title = "Item";
+          // We can just regex the first line or first few braces
+          if (itemStarts[i].type === 'subheading') {
+              // \resumeSubheading{Role}{...}{Company}{...}
+              // Note: Regex might be multi-line
+              const argsMatch = itemContent.match(/\\resumeSubheading\s*\{([^}]*)\}\s*\{[^}]*\}\s*\{([^}]*)\}/);
+              if (argsMatch) {
+                  title = `${argsMatch[1]} @ ${argsMatch[3]}`;
+              }
+          } else {
+              // \resumeProject{Name}{Desc}{Date}
+              const argsMatch = itemContent.match(/\\resumeProject\s*\{([^}]*)\}/);
+              if (argsMatch) {
+                  title = argsMatch[1];
+              }
+          }
+          
+          items.push({
+              id: `${sectionId}-item-${i}`,
+              type: itemStarts[i].type,
+              title: title.replace(/\\textbf\{|\}/g, ''), // Clean up latex formatting in title
+              content: itemContent, // Used for debug/display if needed, but we use indices for assembly
+              isChecked: true,
+              startIndex: absoluteStart,
+              endIndex: absoluteEnd
+          });
+      }
+      
+  } else {
+      // Fallback for Skills (generic itemize) or Text
+      // Look for \item inside \begin{itemize} ... \end{itemize}
+      // The parser needs to be careful not to pick up \item inside sub-lists if we want block granularity.
+      
+      // For MVP as requested: "Skills: Ordinary itemize (MVP treat entire section as one module)"
+      // But let's try to support granular if possible.
+      // Skills usually: \item{ \textbf{Lang}: ... }
+      
+      const itemStartRegex = /\\item\{/g; 
+      let match;
+      const indices: number[] = [];
+      while((match = itemStartRegex.exec(sectionBody)) !== null) {
+          indices.push(match.index);
+      }
+      
+      if (indices.length > 0) {
+          for (let i = 0; i < indices.length; i++) {
+              const start = indices[i];
+              let end = indices[i+1] ? indices[i+1] : sectionBody.lastIndexOf('\\end{itemize}');
+              if (end === -1) end = sectionBody.length;
+              
+              const itemContent = sectionBody.substring(start, end);
+              
+               // Extract "Languages" or "Technologies" from \textbf{...}
+              const titleMatch = itemContent.match(/\\textbf\{([^}]*)\}/);
+              const title = titleMatch ? titleMatch[1] : `Skill Group ${i+1}`;
 
-  while ((match = itemRegex.exec(sectionContent)) !== null) {
-    const fullBlock = match[0];
-    const isSubheading = fullBlock.startsWith('\\resumeSubheading');
-    const isProject = fullBlock.startsWith('\\resumeProject');
-    
-    // Extract Title
-    let title = "Item";
-    if (isSubheading) {
-        // \resumeSubheading{Role}{Location}{Company}{Dates}
-        // Match 1st brace: Role, 3rd brace: Company
-        const argMatch = fullBlock.match(/\\resumeSubheading\s*\{([^}]*)\}\s*\{[^}]*\}\s*\{([^}]*)\}/);
-        if (argMatch) title = `${argMatch[1]} @ ${argMatch[2]}`;
-    } else if (isProject) {
-        // \resumeProject{Name}{Desc}{Dates}
-        const argMatch = fullBlock.match(/\\resumeProject\s*\{([^}]*)\}/);
-        if (argMatch) title = argMatch[1];
-    }
-
-    items.push({
-      id: `${sectionId}-item-${items.length}`,
-      type: isSubheading ? 'subheading' : 'project',
-      title: title,
-      content: fullBlock,
-      isChecked: true
-    });
-  }
-
-  // MVP: If no structured items found (like Skills), treat the whole thing as one item if it has content
-  if (items.length === 0 && sectionContent.trim().length > 0) {
-     // Check if it's just empty space or commands
-     if (sectionContent.includes('\\item')) {
-         items.push({
-             id: `${sectionId}-text-block`,
-             type: 'text',
-             title: 'Content Block (Skills/Misc)',
-             content: sectionContent,
-             isChecked: true
-         });
-     }
+              items.push({
+                  id: `${sectionId}-skill-${i}`,
+                  type: 'text',
+                  title: title,
+                  content: itemContent,
+                  isChecked: true,
+                  startIndex: offset + start,
+                  endIndex: offset + end
+              });
+          }
+      } else {
+         // No items found? Just 1 big block?
+         if (sectionBody.trim().length > 10) {
+             items.push({
+                 id: `${sectionId}-full-block`,
+                 type: 'text',
+                 title: 'Full Section Content',
+                 content: sectionBody,
+                 isChecked: true,
+                 startIndex: offset,
+                 endIndex: offset + sectionBody.length
+             });
+         }
+      }
   }
 
   return items;
 };
 
 /**
- * Reconstructs the LaTeX file based on checked items.
+ * Reconstructs the LaTeX file by removing unchecked items.
+ * Uses the index-based slicing strategy.
  */
 export const assembleLatex = (masterContent: string, sections: ResumeSection[]): string => {
-  // Strategy: We can't simply concatenate sections because we need to preserve the Preamble 
-  // and Document structure (\begin{document} ... \end{document}).
+  // Collect all unchecked items across all sections
+  const uncheckedItems: ResumeItem[] = [];
+  sections.forEach(sec => {
+      sec.items.forEach(item => {
+          if (!item.isChecked) {
+              uncheckedItems.push(item);
+          }
+      });
+  });
   
-  // Simplest robust approach for MVP:
-  // 1. Identify where sections are in the master string.
-  // 2. Replace the content of those sections with the "filtered" content.
+  // Sort by start index descending so we can cut from end to start without affecting indices
+  uncheckedItems.sort((a, b) => b.startIndex - a.startIndex);
   
   let newContent = masterContent;
-
-  // We need to match the sections in the master content again to replace them safely.
-  // However, since we parsed sections sequentially, we can try to locate them.
   
-  sections.forEach(sec => {
-    // Locate the section in the *current* version of newContent (it might have shifted if we edited previous parts? 
-    // No, if we replace distinct blocks it should be fine, but replacing string by value is risky if duplicates exist).
-    
-    // Better Approach: Rebuild the `document` body entirely?
-    // Risk: Losing content *between* sections that wasn't captured.
-    
-    // Hybrid Approach:
-    // Generate the "Active Content" for this section
-    let activeContent = "";
-    
-    // Re-add the section header (found in rawContent usually before items)
-    // This is tricky. Let's look at rawContent again.
-    // rawContent in our parser was: " \resumeSubHeadingListStart ... items ... \resumeSubHeadingListEnd"
-    
-    // If the section type is structured (Experience/Project), we rebuild the list
-    const hasStructuredItems = sec.items.some(i => i.type !== 'text');
-    
-    if (hasStructuredItems) {
-        // We assume the section wrapper is standard: 
-        // \section{...} \resumeSubHeadingListStart [ITEMS] \resumeSubHeadingListEnd
-        
-        // Let's strip the original items from the rawContent and inject checked ones.
-        // This is complex regex surgery.
-        
-        // ALTERNATIVE: Since we have the full text of items.
-        // We construct the section body by concatenating Checked Items.
-        // But we need the wrapper (\resumeSubHeadingListStart/End).
-        
-        const listStart = "\\resumeSubHeadingListStart";
-        const listEnd = "\\resumeSubHeadingListEnd";
-        
-        const activeItems = sec.items.filter(i => i.isChecked).map(i => i.content).join('\n');
-        
-        // We need to replace the *body* of the section in the master file.
-        // We find the section header
-        const secHeaderRegex = new RegExp(`\\\\section\\{\\\\textbf\\{${escapeRegExp(sec.title)}\\}\\}`);
-        
-        // Find where this section starts
-        const match = newContent.match(secHeaderRegex);
-        if (match && match.index !== undefined) {
-             // Find the next \section or \end{document} to delimit the end of this section
-             const restOfString = newContent.substring(match.index + match[0].length);
-             const nextDelimRegex = /(\\section\{|\\end\{document\})/;
-             const nextMatch = restOfString.match(nextDelimRegex);
-             
-             if (nextMatch && nextMatch.index !== undefined) {
-                 const originalBody = restOfString.substring(0, nextMatch.index);
-                 
-                 // Construct new body
-                 // We preserve anything before the first list start if it exists? 
-                 // For now, assume strict template: Section -> ListStart -> Items -> ListEnd
-                 
-                 const newBody = `\n  ${listStart}\n${activeItems}\n  ${listEnd}\n`;
-                 
-                 // Replace
-                 newContent = newContent.replace(match[0] + originalBody, match[0] + newBody);
-             }
-        }
-        
-    } else {
-        // Text block (Skills)
-        // If unchecked, we might want to hide the whole section?
-        // Current requirement: "modules". If Skills has 1 item and it's unchecked, remove section?
-        
-        const allUnchecked = sec.items.every(i => !i.isChecked);
-        if (allUnchecked) {
-             // Remove the section entirely
-             const secHeaderRegex = new RegExp(`\\\\section\\{\\\\textbf\\{${escapeRegExp(sec.title)}\\}\\}[\\s\\S]*?(?=(\\\\section|\\\\end\\{document\\}))`);
-             newContent = newContent.replace(secHeaderRegex, '');
-        }
-    }
+  uncheckedItems.forEach(item => {
+      // Remove content
+      newContent = newContent.slice(0, item.startIndex) + newContent.slice(item.endIndex);
+      
+      // Optional: Clean up empty lines left behind? 
+      // The item slice usually includes the commands, but might leave \vspace or surrounding glue.
+      // For now, raw deletion is safest to avoid syntax errors.
   });
-
+  
   return newContent;
 };
-
-function escapeRegExp(string: string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-}
